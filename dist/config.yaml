@@ -1,0 +1,35 @@
+application:
+  name: 'aseembox-service'
+  port: 3030
+  serverPath: 'aseemboxServer'
+  profiles.active: 'dev,local'
+
+profiles.local:
+  logger:
+    level: 'verbose'
+  docs:
+    name: 'AseemBox 低代码平台服务'
+    describe: '元数据驱动的低代码平台服务端'
+    version: 1.0
+  exceptionFilter:
+    stack:
+      response: true
+      logger: true
+  mysql:
+    default:
+      name: 'default'
+      type: 'mysql'
+      host: '192.168.5.187'
+      port: 4000
+      username: 'root'
+      password: '4^m+3viV0*2e7C_fZ8'
+      database: 'dev_tnt_mb'
+      synchronize: false
+      timeout: 10000
+      logging: true
+  redis:
+    host: 'redis-svc-dev.infra.svc.cluster.local'
+    port: 6379
+    db: 10
+    username: 'dev_yl_rw_deploy'
+    password: '4AEeHq39qk'
