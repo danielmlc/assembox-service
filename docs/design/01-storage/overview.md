@@ -1095,6 +1095,7 @@ Git 仓库分支结构：
 [global] publish: table/order_table (v3)
 [tenant:T001] publish: form/order_form (v2)
 [system] rollback: model/order_model (v3 -> v2)
+
 ```
 
 > 详细设计见 [版本管理详细设计](./version-management.md)
