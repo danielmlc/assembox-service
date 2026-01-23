@@ -1,0 +1,8 @@
+node_modules/*
+**/node_modules/*
+**/lib/*
+**/build/*
+test
+packages/assembox-editor/*
+packages/mctech-demo/*
+packages/desktop-demo/*
