@@ -1,7 +1,7 @@
 # 元数据服务设计
 
-> **状态**: 设计中
-> **更新日期**: 2025-01-20
+> **状态**: 已完成
+> **更新日期**: 2025-01-24
 
 ---
 
@@ -609,8 +609,156 @@ GET /api/v1/meta/models/user
 
 ---
 
-## 7. 相关文档
+## 7. 与代码生成器的交互
+
+### 7.1 概述
+
+在"代码生成 + 构建发布"架构下，元数据服务为代码生成器提供核心输入。PublishModule 的 CodeGeneratorService 通过 ConfigSnapshotService 获取元数据快照，然后生成对应的 TypeScript/Vue 代码。
+
+### 7.2 元数据快照结构
+
+```typescript
+interface MetaSnapshot {
+  models: ModelDefinition[];
+  fields: Map<string, FieldDefinition[]>;      // modelCode -> fields
+  relations: Map<string, RelationDefinition[]>; // modelCode -> relations
+  actions: Map<string, ActionDefinition[]>;     // modelCode -> actions
+  timestamp: Date;
+}
+```
+
+### 7.3 代码生成器消费的元数据
+
+| 元数据类型 | 生成产物 | 说明 |
+|-----------|---------|------|
+| ModelDefinition | Entity 类 | 实体类定义、表映射 |
+| FieldDefinition | 属性定义 | 字段类型、装饰器、验证器 |
+| RelationDefinition | 关联装饰器 | TypeORM 关联配置 |
+| ActionDefinition | Service 方法 | CRUD 及自定义操作 |
+| ValidationRule | 验证逻辑 | class-validator 装饰器 |
+
+### 7.4 元数据到代码的映射示例
+
+**模型定义 → Entity 类**:
+
+```typescript
+// 输入: ModelDefinition
+{
+  code: 'user',
+  tableName: 't_user',
+  config: { enableSoftDelete: true, enableAudit: true }
+}
+
+// 输出: Entity 类
+@Entity('t_user')
+export class UserEntity extends HasEnableEntity {
+  // 字段...
+}
+```
+
+**字段定义 → 属性**:
+
+```typescript
+// 输入: FieldDefinition
+{
+  code: 'email',
+  type: 'string',
+  dbType: 'VARCHAR(200)',
+  constraints: { required: true, unique: true },
+  validations: [{ type: 'regex', pattern: '...' }]
+}
+
+// 输出: 属性
+@Column({ type: 'varchar', length: 200, unique: true })
+@IsNotEmpty()
+@Matches(/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/)
+email: string;
+```
+
+### 7.5 MetaSnapshotProvider
+
+为了支持代码生成，元数据服务提供专门的快照接口：
+
+```typescript
+@Injectable()
+export class MetaSnapshotProvider {
+  constructor(
+    private readonly modelService: ModelService,
+    private readonly fieldService: FieldService,
+    private readonly relationService: RelationService,
+    private readonly actionService: ActionService,
+  ) {}
+
+  /**
+   * 获取产品的元数据快照
+   * 仅包含已发布状态的模型
+   */
+  async getProductMetaSnapshot(productId: string): Promise<MetaSnapshot> {
+    const models = await this.modelService.findPublishedByProduct(productId);
+
+    const fields = new Map<string, FieldDefinition[]>();
+    const relations = new Map<string, RelationDefinition[]>();
+    const actions = new Map<string, ActionDefinition[]>();
+
+    for (const model of models) {
+      fields.set(model.code, await this.fieldService.findByModelCode(model.code));
+      relations.set(model.code, await this.relationService.findByModelCode(model.code));
+      actions.set(model.code, await this.actionService.findByModelCode(model.code));
+    }
+
+    return { models, fields, relations, actions, timestamp: new Date() };
+  }
+
+  /**
+   * 获取单个模型的完整定义
+   * 用于增量代码生成
+   */
+  async getModelFullDefinition(modelCode: string): Promise<ModelFullDefinition> {
+    const model = await this.modelService.findPublishedByCode(modelCode);
+    if (!model) {
+      throw new NotFoundException(`Model ${modelCode} not found or not published`);
+    }
+
+    return {
+      model,
+      fields: await this.fieldService.findByModelCode(modelCode),
+      relations: await this.relationService.findByModelCode(modelCode),
+      actions: await this.actionService.findByModelCode(modelCode),
+    };
+  }
+}
+```
+
+### 7.6 交互流程
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  PublishModule  │     │   MetaModule    │     │   ConfigModule  │
+│  (代码生成器)    │     │  (元数据服务)    │     │  (配置服务)      │
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │                       │                       │
+         │  1. 请求元数据快照     │                       │
+         │──────────────────────>│                       │
+         │                       │                       │
+         │  2. 返回 MetaSnapshot │                       │
+         │<──────────────────────│                       │
+         │                       │                       │
+         │  3. 请求配置快照       │                       │
+         │───────────────────────│──────────────────────>│
+         │                       │                       │
+         │  4. 返回 ConfigSnapshot                       │
+         │<──────────────────────│───────────────────────│
+         │                       │                       │
+         │  5. 生成代码          │                       │
+         │  (ts-morph + EJS)     │                       │
+         │                       │                       │
+```
+
+---
+
+## 8. 相关文档
 
 - [服务层概述](./overview.md)
 - [存储层 - 元数据存储](../01-storage/meta-storage.md)
-- [运行时服务设计](./runtime-service.md)
+- [预览服务设计](./runtime-service.md)
+- [代码生成设计](../05-publish/code-generation.md)

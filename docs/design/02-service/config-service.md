@@ -1,7 +1,8 @@
 # 配置服务设计
 
-> **状态**: 设计中
-> **更新日期**: 2025-01-20
+> **状态**: 已完成
+> **更新日期**: 2025-01-24
+> **架构说明**: 在新架构下，配置服务专注于配置 CRUD 和版本管理，发布流程移交给 PublishModule
 
 ---
 
@@ -12,10 +13,13 @@
 配置服务（ConfigModule）负责管理 Assembox 平台的页面配置和组件配置，包括：
 
 - **配置 CRUD**: 配置的创建、读取、更新、删除
-- **配置发布**: 草稿到发布状态的流转
 - **版本管理**: 配置版本历史、回滚
 - **配置继承**: 四层配置的加载与合并
-- **Git 同步**: 发布时同步到 Gitea
+- **配置快照**: 为发布模块提供配置快照（**新增**）
+- **Git 同步**: 版本历史同步到 Gitea
+
+> **注意**: 配置的"发布"操作（生成代码、构建部署）已移交给 [PublishModule](../05-publish/overview.md)。
+> ConfigModule 仅负责配置本身的状态管理（草稿→已发布），不涉及代码生成和部署。
 
 ### 1.2 与存储层的关系
 
@@ -131,13 +135,14 @@ enum ChangeType {
 
 ### 3.1 服务列表
 
-| 服务 | 职责 |
-|-----|------|
-| ConfigService | 配置的 CRUD |
-| ConfigPublishService | 配置发布与版本管理 |
-| ConfigCacheService | 配置缓存管理 |
-| ConfigMergeService | 配置继承与合并 |
-| ConfigGitSyncService | Git 同步服务 |
+| 服务 | 职责 | 变化 |
+|-----|------|------|
+| ConfigService | 配置的 CRUD | 不变 |
+| ConfigVersionService | 配置版本管理 | 原 ConfigPublishService，重命名 |
+| ConfigCacheService | 配置缓存管理 | 不变 |
+| ConfigMergeService | 配置继承与合并 | 不变 |
+| ConfigSnapshotService | 配置快照服务 | **新增**，为 PublishModule 提供快照 |
+| ConfigGitSyncService | Git 同步服务 | 不变 |
 
 ### 3.2 ConfigService
 
@@ -171,11 +176,13 @@ export class ConfigService {
 }
 ```
 
-### 3.3 ConfigPublishService
+### 3.3 ConfigVersionService
+
+> 原 ConfigPublishService，重命名以明确职责：管理配置版本，不涉及代码生成和部署。
 
 ```typescript
 @Injectable()
-export class ConfigPublishService {
+export class ConfigVersionService {
   constructor(
     private readonly configRepository: ConfigRepository,
     private readonly historyRepository: ConfigHistoryRepository,
@@ -183,8 +190,8 @@ export class ConfigPublishService {
     private readonly configGitSyncService: ConfigGitSyncService,
   ) {}
 
-  // 发布配置
-  async publish(configCode: string, note?: string): Promise<ConfigEntity>;
+  // 标记配置为已发布状态（仅状态变更，不触发代码生成）
+  async markPublished(configCode: string, note?: string): Promise<ConfigEntity>;
 
   // 回滚到指定版本
   async rollback(configCode: string, targetVersion: number): Promise<ConfigEntity>;
@@ -197,10 +204,10 @@ export class ConfigPublishService {
 }
 ```
 
-**发布流程**:
+**版本管理流程**（不涉及代码生成）:
 
 ```
-发布配置
+标记配置为已发布
     │
     ▼
 ┌─────────────────────┐
@@ -229,7 +236,108 @@ export class ConfigPublishService {
 └─────────────────────┘
 ```
 
-### 3.4 ConfigMergeService
+> **注意**: 代码生成和部署由 [PublishModule](../05-publish/overview.md) 负责，
+> PublishModule 会调用 ConfigSnapshotService 获取配置快照后进行代码生成。
+
+### 3.4 ConfigSnapshotService
+
+> **新增服务**：为 PublishModule 提供配置快照，确保发布时配置的一致性。
+
+```typescript
+@Injectable()
+export class ConfigSnapshotService {
+  constructor(
+    private readonly configRepository: ConfigRepository,
+    private readonly configMergeService: ConfigMergeService,
+    private readonly metaCacheService: MetaCacheService,
+  ) {}
+
+  /**
+   * 创建产品配置快照
+   * 用于发布时锁定配置版本，避免发布过程中配置变更
+   */
+  async createProductSnapshot(productId: string): Promise<ProductSnapshot> {
+    // 1. 获取产品下所有模块
+    const modules = await this.getProductModules(productId);
+
+    // 2. 获取每个模块的配置（已合并）
+    const moduleSnapshots = await Promise.all(
+      modules.map(m => this.createModuleSnapshot(m.moduleCode))
+    );
+
+    // 3. 获取元数据
+    const metaSnapshot = await this.createMetaSnapshot(modules);
+
+    return {
+      productId,
+      snapshotId: generateId(),
+      createdAt: new Date(),
+      modules: moduleSnapshots,
+      meta: metaSnapshot,
+    };
+  }
+
+  /**
+   * 创建模块配置快照
+   */
+  async createModuleSnapshot(moduleCode: string): Promise<ModuleSnapshot> {
+    // 获取模块下所有页面配置
+    const pageConfigs = await this.getModulePageConfigs(moduleCode);
+
+    // 合并配置
+    const mergedConfigs = await Promise.all(
+      pageConfigs.map(pc => this.configMergeService.getMergedConfig(pc.configCode, this.getContext()))
+    );
+
+    return {
+      moduleCode,
+      pages: mergedConfigs,
+      version: this.calculateModuleVersion(pageConfigs),
+    };
+  }
+
+  /**
+   * 创建元数据快照
+   */
+  async createMetaSnapshot(modules: ModuleConfig[]): Promise<MetaSnapshot> {
+    const modelCodes = modules.flatMap(m => m.models || []);
+
+    const models = await Promise.all(
+      modelCodes.map(code => this.metaCacheService.getModel(code))
+    );
+
+    const fields = await Promise.all(
+      modelCodes.map(code => this.metaCacheService.getFieldsByModelCode(code))
+    );
+
+    return {
+      models,
+      fields: fields.flat(),
+    };
+  }
+}
+
+interface ProductSnapshot {
+  productId: string;
+  snapshotId: string;
+  createdAt: Date;
+  modules: ModuleSnapshot[];
+  meta: MetaSnapshot;
+}
+
+interface ModuleSnapshot {
+  moduleCode: string;
+  pages: object[];
+  version: string;
+}
+
+interface MetaSnapshot {
+  models: ModelDefinitionEntity[];
+  fields: FieldDefinitionEntity[];
+}
+```
+
+### 3.5 ConfigMergeService
 
 ```typescript
 @Injectable()
@@ -305,7 +413,7 @@ async getMergedConfig(configCode: string, ctx: TenantContext): Promise<object> {
 | null | 显式设置为 null |
 | undefined | 忽略，使用上层值 |
 
-### 3.5 ConfigCacheService
+### 3.6 ConfigCacheService
 
 ```typescript
 @Injectable()
@@ -348,7 +456,7 @@ assembox:config:_tenants:{tenant}:{configCode}
 assembox:config:merged:{tenant}:{configCode}
 ```
 
-### 3.6 ConfigGitSyncService
+### 3.7 ConfigGitSyncService
 
 ```typescript
 @Injectable()
@@ -615,8 +723,72 @@ tenant: tenant_001
 
 ---
 
-## 7. 相关文档
+## 8. 与 PublishModule 的交互
+
+### 8.1 发布流程中的角色
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        配置服务与发布模块的协作                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+用户触发发布
+    │
+    ▼
+┌─────────────────────────────────────┐
+│        PublishModule                 │
+│  PublishOrchestratorService          │
+└──────────────┬──────────────────────┘
+               │
+               │ 1. 请求配置快照
+               ▼
+┌─────────────────────────────────────┐
+│        ConfigModule                  │
+│  ConfigSnapshotService               │
+│  - 锁定当前配置版本                   │
+│  - 合并多层配置                       │
+│  - 返回完整快照                       │
+└──────────────┬──────────────────────┘
+               │
+               │ 2. 返回快照
+               ▼
+┌─────────────────────────────────────┐
+│        PublishModule                 │
+│  CodeGeneratorService                │
+│  - 根据快照生成代码                   │
+│  - 触发构建                          │
+│  - 管理部署                          │
+└─────────────────────────────────────┘
+```
+
+### 8.2 调用示例
+
+```typescript
+// PublishModule 中调用 ConfigSnapshotService
+@Injectable()
+export class PublishOrchestratorService {
+  constructor(
+    private readonly configSnapshotService: ConfigSnapshotService,
+    private readonly codeGeneratorService: CodeGeneratorService,
+  ) {}
+
+  async publish(productId: string): Promise<PublishResult> {
+    // 1. 创建配置快照
+    const snapshot = await this.configSnapshotService.createProductSnapshot(productId);
+
+    // 2. 使用快照生成代码
+    const generatedCode = await this.codeGeneratorService.generate(snapshot);
+
+    // 3. 后续构建、部署...
+  }
+}
+```
+
+---
+
+## 9. 相关文档
 
 - [服务层概述](./overview.md)
+- [发布流程设计](../05-publish/overview.md)
+- [代码生成设计](../05-publish/code-generation.md)
 - [存储层 - 配置存储](../01-storage/config-storage.md)
-- [存储层概述](../01-storage/overview.md)

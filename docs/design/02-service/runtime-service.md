@@ -1,706 +1,916 @@
-# 运行时服务设计
+# 预览服务设计
 
-> **状态**: 设计中
-> **更新日期**: 2025-01-20
+> **状态**: 已完成
+> **更新日期**: 2025-01-24
+> **重要说明**: 原"运行时服务"已降级为"预览服务"，仅用于设计器实时预览
+
+---
+
+## 目录
+
+1. [概述](#1-概述)
+2. [双模式预览架构](#2-双模式预览架构)
+3. [快速预览模式](#3-快速预览模式)
+4. [精确预览模式](#4-精确预览模式)
+5. [服务设计](#5-服务设计)
+6. [API 设计](#6-api-设计)
+7. [预览与生产的一致性保障](#7-预览与生产的一致性保障)
+8. [相关文档](#8-相关文档)
 
 ---
 
 ## 1. 概述
 
-### 1.1 职责定义
-
-运行时服务（RuntimeModule）负责提供基于元数据的动态数据操作 API，包括：
-
-- **动态查询**: 分页查询、关联查询、聚合查询
-- **动态变更**: 创建、更新、删除（软删除/物理删除）
-- **数据验证**: 基于元数据的字段类型和约束验证
-- **SQL 构建**: 动态生成 SQL 语句
-
-### 1.2 核心特点
+### 1.1 架构转型说明
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     动态 API 请求                           │
-│  GET /api/v1/data/user?name__like=张&include=department     │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  1. 解析请求参数                                            │
-│     - modelCode: user                                       │
-│     - 查询条件: name LIKE '%张%'                            │
-│     - 关联: department                                      │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. 加载元数据（从缓存）                                     │
-│     - 模型定义: user → t_user                               │
-│     - 字段定义: name, email, deptId...                      │
-│     - 关联定义: department (many-to-one)                    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. 构建 SQL                                                │
-│     SELECT t.*, d.name as department_name                   │
-│     FROM t_user t                                           │
-│     LEFT JOIN t_department d ON t.dept_id = d.id            │
-│     WHERE t.tenant = ? AND t.name LIKE ? AND t.is_removed = 0│
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. 执行查询并返回结果                                       │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        架构转型：运行时服务 → 预览服务                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    旧架构（运行时解释）                      新架构（代码生成 + 构建发布）
+    ━━━━━━━━━━━━━━━━━━━                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    ┌─────────────────┐                      ┌─────────────────┐
+    │   设计器         │                      │   设计器         │
+    └────────┬────────┘                      └────────┬────────┘
+             │                                        │
+             ▼                                        ▼
+    ┌─────────────────┐                      ┌─────────────────┐
+    │  RuntimeModule   │◀── 生产环境也用      │  PreviewModule   │◀── 仅预览
+    │  运行时解释执行   │                      │  预览专用        │
+    └────────┬────────┘                      └────────┬────────┘
+             │                                        │
+             ▼                                        │
+    ┌─────────────────┐                      ┌────────┴────────┐
+    │    数据库        │                      │    发布时        │
+    └─────────────────┘                      └────────┬────────┘
+                                                      │
+                                                      ▼
+                                             ┌─────────────────┐
+                                             │  PublishModule   │
+                                             │  代码生成        │
+                                             └────────┬────────┘
+                                                      │
+                                                      ▼
+                                             ┌─────────────────┐
+                                             │  生成的标准代码   │◀── 生产环境
+                                             │  NestJS + Vue 3  │
+                                             └─────────────────┘
 ```
 
----
+### 1.2 职责定义
 
-## 2. 服务设计
+预览服务（PreviewModule）**仅用于设计器实时预览**，提供：
 
-### 2.1 服务列表
+| 功能 | 说明 | 使用场景 |
+|-----|------|---------|
+| **快速预览** | 解释执行，秒级生效 | 拖拽编辑时的实时反馈 |
+| **精确预览** | 动态编译执行，100% 一致 | 保存前验证、发布前检查 |
+| **数据模拟** | 模拟数据和真实数据切换 | 开发调试 |
 
-| 服务 | 职责 |
+### 1.3 设计原则
+
+| 原则 | 说明 |
 |-----|------|
-| DynamicQueryService | 动态查询（分页、关联、聚合） |
-| DynamicMutationService | 动态变更（增删改） |
-| DynamicValidatorService | 数据验证与清理 |
-| SqlBuilderService | SQL 构建器 |
-| JoinBuilderService | JOIN 构建器 |
+| **预览专用** | 生产环境使用生成的代码，预览服务不参与 |
+| **快速响应** | 优先保证设计器的交互体验 |
+| **一致性可验证** | 提供"精确预览"模式确保与生产代码一致 |
+| **资源隔离** | 预览环境与生产环境完全隔离 |
 
-### 2.2 DynamicQueryService
+---
+
+## 2. 双模式预览架构
+
+### 2.1 模式对比
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        双模式预览架构                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────┐    ┌──────────────────────────────┐
+    │       快速预览模式             │    │       精确预览模式             │
+    │       (Fast Preview)          │    │       (Accurate Preview)      │
+    ├──────────────────────────────┤    ├──────────────────────────────┤
+    │                              │    │                              │
+    │  元数据 ─▶ 解释器 ─▶ 结果    │    │  元数据 ─▶ 生成器 ─▶ 代码    │
+    │                              │    │              │               │
+    │  延迟: ~100ms                │    │              ▼               │
+    │  一致性: 99%                 │    │         esbuild 编译         │
+    │  场景: 拖拽编辑              │    │              │               │
+    │                              │    │              ▼               │
+    │                              │    │         动态执行             │
+    │                              │    │                              │
+    │                              │    │  延迟: ~2s                   │
+    │                              │    │  一致性: 100%                │
+    │                              │    │  场景: 保存验证、发布前检查   │
+    │                              │    │                              │
+    └──────────────────────────────┘    └──────────────────────────────┘
+```
+
+### 2.2 详细对比表
+
+| 维度 | 快速预览 | 精确预览 |
+|-----|---------|---------|
+| **执行方式** | 运行时解释 | 动态编译执行 |
+| **响应延迟** | ~100ms | ~2s |
+| **与生产一致性** | 99%（可能有细微差异） | 100%（使用相同生成器） |
+| **资源消耗** | 低 | 中（需编译） |
+| **缓存策略** | 元数据变更失效 | 模块级缓存 |
+| **适用场景** | 拖拽、属性调整 | 保存、发布前验证 |
+| **错误提示** | 简化错误 | 完整编译错误 |
+
+### 2.3 模式切换策略
+
+```typescript
+interface PreviewRequest {
+  /**
+   * 预览模式
+   * - 'fast': 快速预览（默认）
+   * - 'accurate': 精确预览
+   * - 'auto': 自动选择（根据操作类型）
+   */
+  mode: 'fast' | 'accurate' | 'auto';
+
+  /**
+   * 元数据配置
+   */
+  config: PageConfig | ServiceConfig;
+
+  /**
+   * 预览上下文
+   */
+  context?: PreviewContext;
+}
+```
+
+**自动模式规则：**
+
+| 触发操作 | 选择模式 | 原因 |
+|---------|---------|------|
+| 拖拽组件 | fast | 需要实时反馈 |
+| 修改属性 | fast | 频繁操作 |
+| 保存配置 | accurate | 验证配置正确性 |
+| 发布前检查 | accurate | 确保一致性 |
+| API 调试 | accurate | 需要真实行为 |
+
+---
+
+## 3. 快速预览模式
+
+### 3.1 架构
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        快速预览模式架构                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                    ┌─────────────────────┐
+                    │   设计器请求         │
+                    │   GET /preview/data │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  解析请求参数        │
+                    │  - modelCode        │
+                    │  - 查询条件         │
+                    │  - 关联关系         │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  加载元数据（缓存）   │
+                    │  - 模型定义         │
+                    │  - 字段定义         │
+                    │  - 关联定义         │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  动态构建 SQL        │
+                    │  - WHERE 子句       │
+                    │  - JOIN 子句        │
+                    │  - 分页             │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  执行查询返回结果     │
+                    └─────────────────────┘
+```
+
+### 3.2 核心服务
 
 ```typescript
 @Injectable()
-export class DynamicQueryService {
+export class FastPreviewService {
+  constructor(
+    private readonly metaCacheService: MetaCacheService,
+    private readonly sqlBuilderService: SqlBuilderService,
+    @Inject(DATA_SOURCE_MANAGER)
+    private readonly dataSourceManager: DataSourceManagerImpl,
+  ) {}
+
+  /**
+   * 快速预览查询
+   */
+  async query(modelCode: string, options: PreviewQueryOptions): Promise<PagedResult> {
+    // 1. 从缓存加载元数据
+    const model = await this.metaCacheService.getModel(modelCode);
+    const fields = await this.metaCacheService.getFieldsByModelCode(modelCode);
+
+    // 2. 构建 SQL
+    const { sql, params } = await this.sqlBuilderService.buildSelectQuery(
+      modelCode,
+      options,
+    );
+
+    // 3. 执行查询
+    const [data, countResult] = await Promise.all([
+      this.dataSourceManager.getDataSource().query(sql, params),
+      this.getCount(modelCode, options),
+    ]);
+
+    // 4. 转换结果（驼峰命名）
+    const items = data.map(row => this.transformRow(row, fields));
+
+    return {
+      items,
+      total: countResult,
+      page: options.page || 1,
+      pageSize: options.pageSize || 10,
+    };
+  }
+
+  /**
+   * 快速预览变更（创建/更新/删除）
+   */
+  async mutate(
+    modelCode: string,
+    action: 'create' | 'update' | 'delete',
+    data: Record<string, any>,
+    id?: string,
+  ): Promise<Record<string, any>> {
+    // 1. 验证数据
+    await this.validateData(modelCode, data, action);
+
+    // 2. 构建并执行 SQL
+    switch (action) {
+      case 'create':
+        return this.executeCreate(modelCode, data);
+      case 'update':
+        return this.executeUpdate(modelCode, id!, data);
+      case 'delete':
+        return this.executeDelete(modelCode, id!);
+    }
+  }
+
+  private transformRow(
+    row: Record<string, any>,
+    fields: FieldDefinitionEntity[],
+  ): Record<string, any> {
+    const result: Record<string, any> = {};
+    for (const field of fields) {
+      const snakeCase = this.toSnakeCase(field.code);
+      result[field.code] = row[snakeCase];
+    }
+    return result;
+  }
+}
+```
+
+### 3.3 快速预览的局限性
+
+| 差异点 | 快速预览行为 | 生产代码行为 |
+|-------|------------|------------|
+| **类型转换** | JavaScript 隐式转换 | TypeScript 严格类型 |
+| **验证逻辑** | 简化的运行时验证 | class-validator 完整验证 |
+| **关联加载** | 简单 JOIN | 可能有复杂的加载策略 |
+| **事务处理** | 无事务 | 根据配置可能有事务 |
+| **错误格式** | 简化错误 | NestJS 标准异常格式 |
+
+---
+
+## 4. 精确预览模式
+
+### 4.1 架构
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        精确预览模式架构                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                    ┌─────────────────────┐
+                    │   设计器请求         │
+                    │   POST /preview/accurate │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  1. 检查编译缓存     │
+                    │  (模块级缓存)        │
+                    └──────────┬──────────┘
+                               │
+               ┌───────────────┴───────────────┐
+               │                               │
+          缓存命中                          缓存未命中
+               │                               │
+               ▼                               ▼
+        ┌────────────┐              ┌─────────────────────┐
+        │ 使用缓存模块│              │  2. 调用代码生成器   │
+        └──────┬─────┘              │  生成 TS 代码        │
+               │                    └──────────┬──────────┘
+               │                               │
+               │                               ▼
+               │                    ┌─────────────────────┐
+               │                    │  3. esbuild 快速编译 │
+               │                    │  TS → JS (内存中)    │
+               │                    └──────────┬──────────┘
+               │                               │
+               │                               ▼
+               │                    ┌─────────────────────┐
+               │                    │  4. 缓存编译结果     │
+               │                    └──────────┬──────────┘
+               │                               │
+               └───────────────┬───────────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  5. 动态加载执行     │
+                    │  (vm.runInContext)  │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  6. 返回执行结果     │
+                    └─────────────────────┘
+```
+
+### 4.2 核心服务
+
+```typescript
+@Injectable()
+export class AccuratePreviewService {
+  private readonly moduleCache = new Map<string, CompiledModule>();
+
+  constructor(
+    private readonly codeGeneratorService: CodeGeneratorService,
+    private readonly metaCacheService: MetaCacheService,
+    @Inject(DATA_SOURCE_MANAGER)
+    private readonly dataSourceManager: DataSourceManagerImpl,
+  ) {}
+
+  /**
+   * 精确预览执行
+   */
+  async execute(request: AccuratePreviewRequest): Promise<any> {
+    const { modelCode, action, data, id } = request;
+    const cacheKey = this.getCacheKey(modelCode);
+
+    // 1. 检查缓存
+    let compiledModule = this.moduleCache.get(cacheKey);
+
+    if (!compiledModule || await this.isStale(modelCode, compiledModule)) {
+      // 2. 生成代码
+      const generatedCode = await this.generateServiceCode(modelCode);
+
+      // 3. 快速编译
+      compiledModule = await this.compileWithEsbuild(generatedCode);
+
+      // 4. 缓存
+      this.moduleCache.set(cacheKey, compiledModule);
+    }
+
+    // 5. 执行
+    return this.executeInSandbox(compiledModule, action, data, id);
+  }
+
+  /**
+   * 使用 esbuild 快速编译
+   */
+  private async compileWithEsbuild(code: GeneratedCode): Promise<CompiledModule> {
+    const result = await esbuild.build({
+      stdin: {
+        contents: code.serviceCode,
+        loader: 'ts',
+        resolveDir: process.cwd(),
+      },
+      bundle: true,
+      format: 'cjs',
+      platform: 'node',
+      target: 'node18',
+      write: false,
+      external: [
+        '@nestjs/common',
+        '@nestjs/typeorm',
+        'typeorm',
+        'class-validator',
+        'class-transformer',
+      ],
+    });
+
+    const compiledJs = result.outputFiles[0].text;
+
+    return {
+      code: compiledJs,
+      compiledAt: new Date(),
+      configVersion: code.configVersion,
+    };
+  }
+
+  /**
+   * 在沙箱中执行编译后的代码
+   */
+  private async executeInSandbox(
+    module: CompiledModule,
+    action: string,
+    data: Record<string, any>,
+    id?: string,
+  ): Promise<any> {
+    // 创建沙箱上下文
+    const sandbox = {
+      require: this.createSafeRequire(),
+      console,
+      process: { env: {} },
+      Buffer,
+      // 注入数据源
+      __dataSource: this.dataSourceManager.getDataSource(),
+    };
+
+    const context = vm.createContext(sandbox);
+
+    // 执行模块
+    const script = new vm.Script(`
+      const module = { exports: {} };
+      ${module.code}
+      module.exports;
+    `);
+
+    const ServiceClass = script.runInContext(context);
+
+    // 创建服务实例并执行
+    const serviceInstance = new ServiceClass(sandbox.__dataSource);
+
+    switch (action) {
+      case 'create':
+        return serviceInstance.create(data);
+      case 'findAll':
+        return serviceInstance.findAll(data);
+      case 'findOne':
+        return serviceInstance.findOne(id);
+      case 'update':
+        return serviceInstance.update(id, data);
+      case 'remove':
+        return serviceInstance.remove(id);
+      default:
+        throw new Error(`Unknown action: ${action}`);
+    }
+  }
+
+  /**
+   * 检查缓存是否过期
+   */
+  private async isStale(modelCode: string, cached: CompiledModule): Promise<boolean> {
+    const currentVersion = await this.metaCacheService.getConfigVersion(modelCode);
+    return cached.configVersion !== currentVersion;
+  }
+
+  /**
+   * 使缓存失效
+   */
+  invalidateCache(modelCode: string): void {
+    const cacheKey = this.getCacheKey(modelCode);
+    this.moduleCache.delete(cacheKey);
+  }
+}
+
+interface CompiledModule {
+  code: string;
+  compiledAt: Date;
+  configVersion: string;
+}
+
+interface GeneratedCode {
+  serviceCode: string;
+  entityCode: string;
+  dtoCode: string;
+  configVersion: string;
+}
+```
+
+### 4.3 编译优化策略
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        编译优化策略                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    1. 增量生成
+    ━━━━━━━━━━━
+    ┌─────────────────┐         ┌─────────────────┐
+    │ 配置变更检测     │ ──────▶ │ 只重新生成变更部分│
+    │ (字段级 diff)   │         │ (非全量)        │
+    └─────────────────┘         └─────────────────┘
+
+    2. 预编译常用模块
+    ━━━━━━━━━━━━━━━━━
+    ┌─────────────────┐         ┌─────────────────┐
+    │ 热门模块预热     │ ──────▶ │ 首次请求无需等待 │
+    └─────────────────┘         └─────────────────┘
+
+    3. 编译结果缓存
+    ━━━━━━━━━━━━━━
+    ┌─────────────────┐         ┌─────────────────┐
+    │ 模块级缓存       │         │ 内存 + Redis 双层│
+    │ (LRU 策略)      │ ──────▶ │ 跨实例共享      │
+    └─────────────────┘         └─────────────────┘
+
+    4. 并行编译
+    ━━━━━━━━━━
+    ┌─────────────────┐         ┌─────────────────┐
+    │ 多模块同时请求   │ ──────▶ │ Worker 线程并行编译│
+    └─────────────────┘         └─────────────────┘
+```
+
+---
+
+## 5. 服务设计
+
+### 5.1 服务列表
+
+| 服务 | 职责 | 预览模式 |
+|-----|------|---------|
+| PreviewQueryService | 预览查询（分页、关联） | 快速 |
+| PreviewMutationService | 预览变更（增删改） | 快速 |
+| PreviewValidatorService | 预览时数据验证 | 快速 |
+| AccuratePreviewService | 精确预览执行 | 精确 |
+| PreviewCacheService | 预览缓存管理 | 两者 |
+
+### 5.2 PreviewQueryService
+
+```typescript
+@Injectable()
+export class PreviewQueryService {
   constructor(
     @Inject(DATA_SOURCE_MANAGER)
     private readonly dataSourceManager: DataSourceManagerImpl,
     private readonly metaCacheService: MetaCacheService,
     private readonly sqlBuilderService: SqlBuilderService,
-    private readonly joinBuilderService: JoinBuilderService,
-    private readonly contextService: ContextService,
   ) {}
 
-  // 分页查询
-  async query(modelCode: string, options: QueryOptions): Promise<PagedResult>;
+  /**
+   * 分页查询
+   */
+  async query(modelCode: string, options: QueryOptions): Promise<PagedResult> {
+    const model = await this.metaCacheService.getModel(modelCode);
+    const fields = await this.metaCacheService.getFieldsByModelCode(modelCode);
 
-  // 简单查询（不带关联）
-  async querySimple(modelCode: string, options: QueryOptions): Promise<Record<string, any>[]>;
+    const { sql, params } = await this.sqlBuilderService.buildSelectQuery(
+      modelCode,
+      options,
+    );
 
-  // 带关联的查询
-  async queryWithRelations(modelCode: string, options: QueryOptions, relations: string[]): Promise<Record<string, any>[]>;
+    const data = await this.dataSourceManager.getDataSource().query(sql, params);
+    const total = await this.getCount(modelCode, options);
 
-  // 根据 ID 查询
-  async findById(modelCode: string, id: string, relations?: string[]): Promise<Record<string, any> | null>;
+    return {
+      items: this.transformResults(data, fields),
+      total,
+      page: options.page || 1,
+      pageSize: options.pageSize || 10,
+    };
+  }
 
-  // 根据 ID 查询（不存在则抛异常）
-  async findByIdOrFail(modelCode: string, id: string, relations?: string[]): Promise<Record<string, any>>;
+  /**
+   * 根据 ID 查询
+   */
+  async findById(
+    modelCode: string,
+    id: string,
+    relations?: string[],
+  ): Promise<Record<string, any> | null> {
+    const model = await this.metaCacheService.getModel(modelCode);
+    const fields = await this.metaCacheService.getFieldsByModelCode(modelCode);
 
-  // 根据条件查询单条
-  async findOne(modelCode: string, options: QueryOptions, relations?: string[]): Promise<Record<string, any> | null>;
+    let sql = `SELECT * FROM ${model.tableName} WHERE id = ? AND is_removed = 0`;
+    const params = [id];
 
-  // 查询所有（不分页）
-  async findAll(modelCode: string, options: QueryOptions, relations?: string[]): Promise<Record<string, any>[]>;
+    if (relations?.length) {
+      // 构建 JOIN
+      const joinResult = await this.buildJoins(modelCode, relations);
+      sql = joinResult.sql;
+      params.push(...joinResult.params);
+    }
 
-  // 聚合查询
-  async aggregate(modelCode: string, options: AggregateOptions): Promise<Record<string, any>[]>;
+    const [result] = await this.dataSourceManager.getDataSource().query(sql, params);
+    return result ? this.transformRow(result, fields) : null;
+  }
 
-  // 检查记录是否存在
-  async exists(modelCode: string, options: QueryOptions): Promise<boolean>;
+  private transformResults(
+    rows: Record<string, any>[],
+    fields: FieldDefinitionEntity[],
+  ): Record<string, any>[] {
+    return rows.map(row => this.transformRow(row, fields));
+  }
 
-  // 检查指定 ID 是否存在
-  async existsById(modelCode: string, id: string): Promise<boolean>;
-
-  // 加载一对多关联数据
-  async loadOneToMany(parentModelCode: string, parentIds: string[], relationCode: string): Promise<Map<string, Record<string, any>[]>>;
+  private transformRow(
+    row: Record<string, any>,
+    fields: FieldDefinitionEntity[],
+  ): Record<string, any> {
+    const result: Record<string, any> = {};
+    for (const field of fields) {
+      const snakeKey = this.toSnakeCase(field.code);
+      if (row.hasOwnProperty(snakeKey)) {
+        result[field.code] = row[snakeKey];
+      }
+    }
+    return result;
+  }
 }
 ```
 
-### 2.3 DynamicMutationService
+### 5.3 PreviewMutationService
 
 ```typescript
 @Injectable()
-export class DynamicMutationService {
+export class PreviewMutationService {
   constructor(
     @Inject(DATA_SOURCE_MANAGER)
     private readonly dataSourceManager: DataSourceManagerImpl,
     private readonly metaCacheService: MetaCacheService,
     private readonly sqlBuilderService: SqlBuilderService,
-    private readonly contextService: ContextService,
-    private readonly rpcClient: RpcClient,
-    private readonly pluginExecutorService: PluginExecutorService,
-  ) {}
-
-  // 创建记录
-  async create(modelCode: string, data: Record<string, any>): Promise<Record<string, any>>;
-
-  // 批量创建
-  async createMany(modelCode: string, dataList: Record<string, any>[]): Promise<Record<string, any>[]>;
-
-  // 更新记录
-  async update(modelCode: string, id: string, data: Record<string, any>): Promise<Record<string, any>>;
-
-  // 批量更新
-  async updateMany(modelCode: string, ids: string[], data: Record<string, any>): Promise<number>;
-
-  // 根据条件更新
-  async updateByCondition(modelCode: string, conditions: QueryCondition[], data: Record<string, any>): Promise<number>;
-
-  // 删除记录
-  async delete(modelCode: string, id: string, actionType: ActionType): Promise<void>;
-
-  // 软删除
-  async softDelete(modelCode: string, id: string): Promise<void>;
-
-  // 批量软删除
-  async softDeleteMany(modelCode: string, ids: string[]): Promise<number>;
-
-  // 物理删除
-  async hardDelete(modelCode: string, id: string): Promise<void>;
-
-  // 批量物理删除
-  async hardDeleteMany(modelCode: string, ids: string[]): Promise<number>;
-}
-```
-
-**创建流程**:
-
-```typescript
-async create(modelCode: string, data: Record<string, any>): Promise<Record<string, any>> {
-  const tenant = this.contextService.getContext<string>('tenantCode');
-  const userId = this.contextService.getContext<string>('userId');
-  const userName = this.contextService.getContext<string>('realName');
-
-  // 1. 执行前置钩子
-  const hookContext: HookContext = {
-    modelCode,
-    actionCode: 'create',
-    stage: HookStage.BEFORE_CREATE,
-    data,
-    tenantCode: tenant,
-    userId,
-    userName,
-  };
-  const hookResult = await this.pluginExecutorService.executeHooks(hookContext);
-  if (hookResult.abort) {
-    throw new BusinessException(hookResult.abortReason);
-  }
-  const finalData = hookResult.data || data;
-
-  // 2. 获取分布式 ID
-  const id = await this.rpcClient.getNewId();
-
-  // 3. 填充系统字段
-  const record = {
-    id,
-    ...finalData,
-    tenant,
-    creatorId: userId,
-    creatorName: userName,
-    modifierId: userId,
-    modifierName: userName,
-    createdAt: new Date(),
-    modifierAt: new Date(),
-    isRemoved: false,
-    version: Date.now(),
-  };
-
-  // 4. 构建并执行 INSERT SQL
-  const { sql, params } = await this.sqlBuilderService.buildInsertQuery(modelCode, record);
-  await this.dataSourceManager.getDataSource().query(sql, params);
-
-  // 5. 执行后置钩子
-  hookContext.stage = HookStage.AFTER_CREATE;
-  hookContext.result = record;
-  await this.pluginExecutorService.executeHooks(hookContext);
-
-  return record;
-}
-```
-
-### 2.4 DynamicValidatorService
-
-```typescript
-@Injectable()
-export class DynamicValidatorService {
-  constructor(
-    private readonly metaCacheService: MetaCacheService,
-  ) {}
-
-  // 验证数据（通过则返回，否则抛异常）
-  async validateOrFail(modelCode: string, data: Record<string, any>, isUpdate: boolean): Promise<void>;
-
-  // 验证数据（返回验证结果）
-  async validate(modelCode: string, data: Record<string, any>, isUpdate: boolean): Promise<ValidationResult>;
-
-  // 数据清理（移除无效字段、类型转换）
-  async sanitize(modelCode: string, data: Record<string, any>): Promise<Record<string, any>>;
-
-  // 验证单个字段
-  async validateField(field: FieldDefinitionEntity, value: any): Promise<FieldValidationResult>;
-}
-```
-
-**验证流程**:
-
-```typescript
-async validateOrFail(modelCode: string, data: Record<string, any>, isUpdate: boolean): Promise<void> {
-  const fields = await this.metaCacheService.getFieldsByModelCode(modelCode);
-  const errors: ValidationError[] = [];
-
-  for (const field of fields) {
-    // 跳过系统字段
-    if (SYSTEM_FIELDS.includes(field.code)) continue;
-
-    const value = data[field.code];
-
-    // 1. 必填校验（创建时检查，更新时仅检查已提供的字段）
-    if (!isUpdate && field.constraints.required && (value === undefined || value === null)) {
-      errors.push({ field: field.code, message: `${field.name}不能为空` });
-      continue;
-    }
-
-    // 跳过未提供的字段
-    if (value === undefined) continue;
-
-    // 2. 类型校验
-    const typeError = this.validateType(field.type, value);
-    if (typeError) {
-      errors.push({ field: field.code, message: typeError });
-      continue;
-    }
-
-    // 3. 约束校验
-    const constraintErrors = this.validateConstraints(field, value);
-    errors.push(...constraintErrors);
-
-    // 4. 自定义验证规则
-    if (field.validations) {
-      const validationErrors = this.validateRules(field, value);
-      errors.push(...validationErrors);
-    }
-  }
-
-  if (errors.length > 0) {
-    throw new ValidationException('数据验证失败', errors);
-  }
-}
-```
-
-### 2.5 SqlBuilderService
-
-```typescript
-@Injectable()
-export class SqlBuilderService {
-  constructor(
-    private readonly metaCacheService: MetaCacheService,
+    private readonly previewValidatorService: PreviewValidatorService,
     private readonly contextService: ContextService,
   ) {}
 
-  // 构建 SELECT 查询
-  async buildSelectQuery(modelCode: string, options: QueryOptions): Promise<SqlResult>;
+  /**
+   * 创建记录
+   */
+  async create(modelCode: string, data: Record<string, any>): Promise<Record<string, any>> {
+    // 1. 验证数据
+    await this.previewValidatorService.validateOrFail(modelCode, data, false);
 
-  // 构建 COUNT 查询
-  async buildCountQuery(modelCode: string, options: QueryOptions): Promise<SqlResult>;
+    // 2. 生成 ID
+    const id = this.generateId();
 
-  // 构建 INSERT 查询
-  async buildInsertQuery(modelCode: string, data: Record<string, any>): Promise<SqlResult>;
+    // 3. 填充系统字段
+    const record = {
+      id,
+      ...data,
+      createdAt: new Date(),
+      modifierAt: new Date(),
+      isRemoved: false,
+    };
 
-  // 构建批量 INSERT 查询
-  async buildBatchInsertQuery(modelCode: string, dataList: Record<string, any>[]): Promise<SqlResult>;
+    // 4. 构建并执行 INSERT
+    const { sql, params } = await this.sqlBuilderService.buildInsertQuery(
+      modelCode,
+      record,
+    );
+    await this.dataSourceManager.getDataSource().query(sql, params);
 
-  // 构建 UPDATE 查询
-  async buildUpdateQuery(modelCode: string, id: string, data: Record<string, any>): Promise<SqlResult>;
-
-  // 构建条件 UPDATE 查询
-  async buildUpdateByConditionQuery(modelCode: string, conditions: QueryCondition[], data: Record<string, any>): Promise<SqlResult>;
-
-  // 构建 DELETE 查询
-  async buildDeleteQuery(modelCode: string, id: string): Promise<SqlResult>;
-
-  // 构建聚合查询
-  async buildAggregateQuery(modelCode: string, options: AggregateOptions): Promise<SqlResult>;
-
-  // 构建 WHERE 子句
-  buildWhereClause(conditions: QueryCondition[], params: any[]): string;
-
-  // 构建 ORDER BY 子句
-  buildOrderByClause(sorts: SortConfig[]): string;
-}
-
-interface SqlResult {
-  sql: string;
-  params: any[];
-}
-```
-
-**SELECT 查询构建示例**:
-
-```typescript
-async buildSelectQuery(modelCode: string, options: QueryOptions): Promise<SqlResult> {
-  const model = await this.metaCacheService.getModel(modelCode);
-  const fields = await this.metaCacheService.getFieldsByModelCode(modelCode);
-  const tenant = this.contextService.getContext<string>('tenantCode');
-
-  const params: any[] = [];
-  const tableName = model.tableName;
-  const alias = 't';
-
-  // 构建 SELECT 字段
-  const selectFields = options.select
-    ? options.select.map(f => `${alias}.${this.toSnakeCase(f)}`)
-    : fields.map(f => `${alias}.${this.toSnakeCase(f.code)}`);
-
-  // 构建 WHERE 子句
-  const whereClauses: string[] = [
-    `${alias}.tenant = ?`,
-    `${alias}.is_removed = 0`,
-  ];
-  params.push(tenant);
-
-  if (options.where) {
-    const { clause, whereParams } = this.buildWhereClause(options.where, alias);
-    whereClauses.push(clause);
-    params.push(...whereParams);
+    return record;
   }
 
-  // 构建 ORDER BY
-  let orderByClause = '';
-  if (options.orderBy?.length) {
-    orderByClause = 'ORDER BY ' + options.orderBy
-      .map(s => `${alias}.${this.toSnakeCase(s.field)} ${s.direction}`)
-      .join(', ');
+  /**
+   * 更新记录
+   */
+  async update(
+    modelCode: string,
+    id: string,
+    data: Record<string, any>,
+  ): Promise<Record<string, any>> {
+    // 1. 验证数据
+    await this.previewValidatorService.validateOrFail(modelCode, data, true);
+
+    // 2. 填充修改字段
+    const updateData = {
+      ...data,
+      modifierAt: new Date(),
+    };
+
+    // 3. 构建并执行 UPDATE
+    const { sql, params } = await this.sqlBuilderService.buildUpdateQuery(
+      modelCode,
+      id,
+      updateData,
+    );
+    await this.dataSourceManager.getDataSource().query(sql, params);
+
+    // 4. 返回更新后的记录
+    return this.findById(modelCode, id);
   }
 
-  // 构建分页
-  let limitClause = '';
-  if (options.page && options.pageSize) {
-    const offset = (options.page - 1) * options.pageSize;
-    limitClause = `LIMIT ${options.pageSize} OFFSET ${offset}`;
+  /**
+   * 软删除
+   */
+  async softDelete(modelCode: string, id: string): Promise<void> {
+    const { sql, params } = await this.sqlBuilderService.buildUpdateQuery(
+      modelCode,
+      id,
+      { isRemoved: true, modifierAt: new Date() },
+    );
+    await this.dataSourceManager.getDataSource().query(sql, params);
   }
-
-  const sql = `
-    SELECT ${selectFields.join(', ')}
-    FROM ${tableName} ${alias}
-    WHERE ${whereClauses.join(' AND ')}
-    ${orderByClause}
-    ${limitClause}
-  `.trim();
-
-  return { sql, params };
-}
-```
-
-### 2.6 JoinBuilderService
-
-```typescript
-@Injectable()
-export class JoinBuilderService {
-  constructor(
-    private readonly metaCacheService: MetaCacheService,
-    private readonly sqlBuilderService: SqlBuilderService,
-  ) {}
-
-  // 构建带关联的查询
-  async buildQueryWithRelations(modelCode: string, options: QueryOptions, relations: string[]): Promise<SqlResult>;
-
-  // 构建带关联的计数查询
-  async buildCountWithRelations(modelCode: string, options: QueryOptions, relations: string[]): Promise<SqlResult>;
-
-  // 构建嵌套查询（一对多）
-  async buildNestedQuery(parentModelCode: string, parentIds: string[], relationCode: string): Promise<SqlResult>;
-
-  // 构建 JOIN 子句
-  async buildJoinClause(relation: RelationDefinitionEntity, mainAlias: string, joinAlias: string): Promise<string>;
 }
 ```
 
 ---
 
-## 3. API 设计
+## 6. API 设计
 
-### 3.1 路由定义
+### 6.1 路由定义
 
-| 方法 | 路径 | 说明 |
-|-----|------|------|
-| GET | /api/v1/data/:modelCode | 分页查询 |
-| GET | /api/v1/data/:modelCode/:id | 单条查询 |
-| POST | /api/v1/data/:modelCode | 创建记录 |
-| PUT | /api/v1/data/:modelCode/:id | 更新记录 |
-| DELETE | /api/v1/data/:modelCode/:id | 删除记录 |
-| POST | /api/v1/data/:modelCode/batch | 批量创建 |
-| PUT | /api/v1/data/:modelCode/batch | 批量更新 |
-| DELETE | /api/v1/data/:modelCode/batch | 批量删除 |
-| POST | /api/v1/data/:modelCode/aggregate | 聚合查询 |
-| GET | /api/v1/data/:modelCode/:id/exists | 检查是否存在 |
+| 方法 | 路径 | 说明 | 模式 |
+|-----|------|------|-----|
+| GET | /api/v1/preview/:modelCode | 分页查询 | fast |
+| GET | /api/v1/preview/:modelCode/:id | 单条查询 | fast |
+| POST | /api/v1/preview/:modelCode | 创建记录 | fast |
+| PUT | /api/v1/preview/:modelCode/:id | 更新记录 | fast |
+| DELETE | /api/v1/preview/:modelCode/:id | 删除记录 | fast |
+| POST | /api/v1/preview/accurate | 精确预览 | accurate |
+| POST | /api/v1/preview/validate | 配置验证 | accurate |
 
-### 3.2 查询参数
+### 6.2 请求/响应示例
 
-| 参数 | 类型 | 说明 | 示例 |
-|-----|------|------|------|
-| page | number | 页码（从1开始） | page=1 |
-| pageSize | number | 每页数量 | pageSize=20 |
-| select | string | 返回字段（逗号分隔） | select=name,email |
-| orderBy | string | 排序（字段:方向） | orderBy=createdAt:desc |
-| include | string | 关联查询（逗号分隔） | include=department,roles |
-| {field} | any | 等值查询 | status=active |
-| {field}__gt | any | 大于 | age__gt=18 |
-| {field}__gte | any | 大于等于 | age__gte=18 |
-| {field}__lt | any | 小于 | age__lt=60 |
-| {field}__lte | any | 小于等于 | age__lte=60 |
-| {field}__like | string | 模糊查询 | name__like=张 |
-| {field}__in | string | IN 查询（逗号分隔） | status__in=active,pending |
-| {field}__isNull | boolean | NULL 检查 | deletedAt__isNull=true |
-
-### 3.3 请求/响应示例
-
-**分页查询**:
+**快速预览查询：**
 
 ```http
-GET /api/v1/data/user?page=1&pageSize=10&name__like=张&include=department
-X-Tenant-Code: tenant_001
+GET /api/v1/preview/order?page=1&pageSize=10&status=1
+X-Preview-Mode: fast
 ```
 
-**响应**:
+**响应：**
 
 ```json
 {
   "code": 200,
   "status": "success",
-  "message": "查询成功",
   "result": {
-    "items": [
-      {
-        "id": "123456",
-        "name": "张三",
-        "email": "zhangsan@example.com",
-        "deptId": "dept_001",
-        "department": {
-          "id": "dept_001",
-          "name": "技术部"
-        },
-        "createdAt": "2025-01-20T10:00:00Z"
-      }
-    ],
+    "items": [...],
     "total": 100,
     "page": 1,
-    "pageSize": 10,
-    "totalPages": 10
+    "pageSize": 10
+  },
+  "meta": {
+    "mode": "fast",
+    "latency": 85
   }
 }
 ```
 
-**创建记录**:
+**精确预览请求：**
 
 ```http
-POST /api/v1/data/user
+POST /api/v1/preview/accurate
 Content-Type: application/json
-X-Tenant-Code: tenant_001
 
 {
-  "name": "张三",
-  "email": "zhangsan@example.com",
-  "deptId": "dept_001"
+  "modelCode": "order",
+  "action": "create",
+  "data": {
+    "orderNo": "ORD202501001",
+    "totalAmount": 100.00,
+    "status": 0
+  }
 }
 ```
 
-**响应**:
+**响应：**
 
 ```json
 {
   "code": 200,
   "status": "success",
-  "message": "创建成功",
   "result": {
     "id": "123456789",
-    "name": "张三",
-    "email": "zhangsan@example.com",
-    "deptId": "dept_001",
-    "createdAt": "2025-01-20T10:00:00Z",
-    "creatorName": "管理员"
+    "orderNo": "ORD202501001",
+    "totalAmount": 100.00,
+    "status": 0,
+    "createdAt": "2025-01-24T10:00:00Z"
+  },
+  "meta": {
+    "mode": "accurate",
+    "latency": 1850,
+    "compiled": true,
+    "cacheHit": false
   }
 }
 ```
 
-**聚合查询**:
-
-```http
-POST /api/v1/data/user/aggregate
-Content-Type: application/json
-
-{
-  "groupBy": ["deptId"],
-  "aggregates": [
-    { "function": "count", "field": "id", "alias": "userCount" },
-    { "function": "avg", "field": "age", "alias": "avgAge" }
-  ],
-  "where": [
-    { "field": "status", "operator": "eq", "value": "active" }
-  ]
-}
-```
-
-**响应**:
-
-```json
-{
-  "code": 200,
-  "status": "success",
-  "result": [
-    { "deptId": "dept_001", "userCount": 15, "avgAge": 28.5 },
-    { "deptId": "dept_002", "userCount": 20, "avgAge": 32.1 }
-  ]
-}
-```
-
 ---
 
-## 4. 数据类型定义
+## 7. 预览与生产的一致性保障
 
-### 4.1 查询选项
+### 7.1 一致性策略
 
-```typescript
-interface QueryOptions {
-  page?: number;                 // 页码
-  pageSize?: number;             // 每页数量
-  select?: string[];             // 返回字段
-  where?: QueryCondition[];      // 查询条件
-  orderBy?: SortConfig[];        // 排序
-  include?: string[];            // 关联查询
-}
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        一致性保障策略                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-interface QueryCondition {
-  field: string;                 // 字段名
-  operator: QueryOperator;       // 操作符
-  value?: any;                   // 值
-}
+    1. 共用代码生成器
+    ━━━━━━━━━━━━━━━━━
+    ┌─────────────────┐
+    │  CodeGenerator   │ ◀──── 精确预览和发布使用同一个生成器
+    │  (单一来源)      │
+    └────────┬────────┘
+             │
+        ┌────┴────┐
+        │         │
+        ▼         ▼
+    ┌──────┐  ┌──────┐
+    │ 预览  │  │ 发布  │
+    │(动态编译)│  │(构建) │
+    └──────┘  └──────┘
 
-type QueryOperator =
-  | 'eq'       // =
-  | 'ne'       // !=
-  | 'gt'       // >
-  | 'gte'      // >=
-  | 'lt'       // <
-  | 'lte'      // <=
-  | 'like'     // LIKE %value%
-  | 'notLike'  // NOT LIKE
-  | 'in'       // IN
-  | 'notIn'    // NOT IN
-  | 'isNull'   // IS NULL
-  | 'isNotNull'; // IS NOT NULL
+    2. 类型定义共享
+    ━━━━━━━━━━━━━━
+    ┌─────────────────┐
+    │  生成的类型定义   │ ◀──── DTO、Entity 类型在预览和生产中完全一致
+    └─────────────────┘
 
-interface SortConfig {
-  field: string;
-  direction: 'ASC' | 'DESC';
-}
+    3. 验证规则同源
+    ━━━━━━━━━━━━━━
+    ┌─────────────────┐
+    │  元数据约束定义   │ ◀──── 同一份约束生成同样的 class-validator 装饰器
+    └─────────────────┘
 ```
 
-### 4.2 聚合选项
-
-```typescript
-interface AggregateOptions {
-  groupBy?: string[];            // 分组字段
-  aggregates: AggregateField[];  // 聚合字段
-  where?: QueryCondition[];      // 过滤条件
-  having?: QueryCondition[];     // HAVING 条件
-}
-
-interface AggregateField {
-  function: AggregateFunction;   // 聚合函数
-  field: string;                 // 字段名
-  alias: string;                 // 别名
-}
-
-type AggregateFunction = 'count' | 'sum' | 'avg' | 'min' | 'max';
-```
-
-### 4.3 分页结果
-
-```typescript
-interface PagedResult<T = Record<string, any>> {
-  items: T[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-}
-```
-
----
-
-## 5. 租户隔离
-
-### 5.1 TenantInterceptor
+### 7.2 差异检测
 
 ```typescript
 @Injectable()
-export class TenantInterceptor implements NestInterceptor {
-  constructor(private readonly contextService: ContextService) {}
+export class ConsistencyCheckService {
+  /**
+   * 对比快速预览和精确预览的结果差异
+   */
+  async compareResults(
+    modelCode: string,
+    action: string,
+    data: Record<string, any>,
+  ): Promise<ConsistencyReport> {
+    // 分别执行两种预览
+    const [fastResult, accurateResult] = await Promise.all([
+      this.fastPreviewService.execute(modelCode, action, data),
+      this.accuratePreviewService.execute(modelCode, action, data),
+    ]);
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const request = context.switchToHttp().getRequest();
+    // 对比结果
+    const differences = this.findDifferences(fastResult, accurateResult);
 
-    // 从请求头获取租户代码
-    const tenantCode = request.headers['x-tenant-code'];
-    if (!tenantCode) {
-      throw new BadRequestException('缺少租户信息');
-    }
-
-    // 从 JWT 获取用户信息
-    const user = request.user;
-
-    // 设置上下文
-    this.contextService.setContext('tenantCode', tenantCode);
-    this.contextService.setContext('userId', user?.id);
-    this.contextService.setContext('realName', user?.name);
-
-    return next.handle();
+    return {
+      consistent: differences.length === 0,
+      differences,
+      fastResult,
+      accurateResult,
+    };
   }
+
+  private findDifferences(
+    fast: any,
+    accurate: any,
+    path: string = '',
+  ): Difference[] {
+    const differences: Difference[] = [];
+
+    // 深度对比...
+
+    return differences;
+  }
+}
+
+interface ConsistencyReport {
+  consistent: boolean;
+  differences: Difference[];
+  fastResult: any;
+  accurateResult: any;
+}
+
+interface Difference {
+  path: string;
+  fastValue: any;
+  accurateValue: any;
+  type: 'type_mismatch' | 'value_mismatch' | 'missing_field' | 'extra_field';
 }
 ```
 
-### 5.2 SQL 自动注入租户条件
+### 7.3 预览环境隔离
 
-所有查询自动添加 `tenant = ?` 条件：
-
-```sql
--- 原始查询
-SELECT * FROM t_user WHERE name LIKE '%张%'
-
--- 自动添加租户条件
-SELECT * FROM t_user WHERE tenant = 'tenant_001' AND name LIKE '%张%' AND is_removed = 0
-```
+| 隔离维度 | 说明 |
+|---------|------|
+| **数据库** | 预览使用独立的 schema 或表前缀 |
+| **缓存** | 预览缓存与生产缓存隔离 |
+| **配置** | 预览环境可使用不同的配置 |
+| **资源** | 预览计算资源有限制（防止滥用） |
 
 ---
 
-## 6. 插件集成
-
-运行时服务在数据操作的关键节点调用插件钩子：
-
-```
-┌──────────┐     ┌──────────────┐     ┌──────────┐
-│ 请求数据  │ ──▶ │ beforeCreate │ ──▶ │ 插件处理  │
-└──────────┘     └──────────────┘     └────┬─────┘
-                                           │
-                                           ▼
-                                    ┌──────────────┐
-                                    │  执行 INSERT │
-                                    └──────┬───────┘
-                                           │
-                                           ▼
-┌──────────┐     ┌──────────────┐     ┌──────────┐
-│ 返回结果  │ ◀── │ afterCreate  │ ◀── │ 插件处理  │
-└──────────┘     └──────────────┘     └──────────┘
-```
-
-详见 [插件系统设计](./plugin-service.md)
-
----
-
-## 7. 相关文档
+## 8. 相关文档
 
 - [服务层概述](./overview.md)
+- [代码生成设计](../05-publish/code-generation.md)
 - [元数据服务设计](./meta-service.md)
 - [插件系统设计](./plugin-service.md)

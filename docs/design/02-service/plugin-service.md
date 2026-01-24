@@ -1,579 +1,726 @@
 # 插件系统设计
 
-> **状态**: 设计中
-> **更新日期**: 2025-01-20
+> **状态**: 已完成
+> **更新日期**: 2025-01-24
 
 ---
 
 ## 1. 概述
 
-### 1.1 职责定义
+### 1.1 架构演进
 
-插件系统（PluginModule）提供扩展机制，允许在数据操作的关键节点注入自定义业务逻辑：
+在"代码生成 + 构建发布"架构下，插件系统从**运行时钩子**演进为**编译时插桩**：
 
-- **钩子机制**: 在数据操作前后执行自定义逻辑
-- **插件注册**: 管理插件的注册、启用、禁用
-- **优先级控制**: 按优先级顺序执行多个插件
+| 对比项 | 运行时钩子（旧） | 编译时插桩（新） |
+|-------|---------------|---------------|
+| 执行时机 | 运行时动态查找并执行 | 构建时注入到生成代码中 |
+| 性能 | 每次操作都有钩子查找开销 | 零运行时开销 |
+| 调试 | 难以追踪执行流程 | 代码可读、可调试 |
+| 灵活性 | 运行时可动态启用/禁用 | 需要重新发布生效 |
+| 复杂度 | 需要钩子调度引擎 | 直接生成函数调用 |
 
-### 1.2 应用场景
+### 1.2 职责定义
 
-| 场景 | 钩子阶段 | 说明 |
-|-----|---------|------|
-| 数据校验 | beforeCreate/beforeUpdate | 业务规则验证 |
-| 默认值填充 | beforeCreate | 自动填充业务字段 |
-| 数据脱敏 | afterQuery | 敏感数据脱敏处理 |
-| 操作日志 | afterCreate/afterUpdate/afterDelete | 记录操作日志 |
-| 级联操作 | afterDelete | 清理关联数据 |
-| 消息通知 | afterCreate | 发送通知 |
-| 数据同步 | afterCreate/afterUpdate | 同步到其他系统 |
+插件系统（PluginModule）在新架构下的职责：
+
+- **插件元数据管理**: 定义插件的配置、代码块、注入点
+- **插件代码块存储**: 管理可复用的业务逻辑代码片段
+- **为代码生成器提供输入**: 将插件配置转换为代码生成器可消费的格式
+
+### 1.3 核心概念
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    PluginDefinition                          │
+│  代码: audit-log                                             │
+│  名称: 操作日志插件                                           │
+├─────────────────────────────────────────────────────────────┤
+│  CodeBlocks (代码块)                                         │
+│  ├── afterCreate: "await this.logService.log(...)"          │
+│  ├── afterUpdate: "await this.logService.log(...)"          │
+│  └── afterDelete: "await this.logService.log(...)"          │
+├─────────────────────────────────────────────────────────────┤
+│  Dependencies (依赖)                                         │
+│  └── LogService: '@app/services/log.service'                │
+├─────────────────────────────────────────────────────────────┤
+│  Bindings (绑定)                                             │
+│  ├── order.create → afterCreate                             │
+│  ├── order.update → afterUpdate                             │
+│  └── user.* → afterCreate, afterUpdate, afterDelete         │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 2. 核心接口
+## 2. 数据模型
 
-### 2.1 钩子阶段
+### 2.1 插件定义 (PluginDefinition)
 
 ```typescript
+interface PluginDefinition {
+  id: string;                       // 主键
+  code: string;                     // 插件代码（唯一标识）
+  name: string;                     // 插件名称
+  description?: string;             // 描述
+  version: string;                  // 版本号
+
+  // 代码块定义
+  codeBlocks: CodeBlockDefinition[];
+
+  // 依赖声明
+  dependencies: DependencyDefinition[];
+
+  // 插件配置
+  config?: PluginConfig;
+
+  status: PluginStatus;             // 状态
+  tenant: string;
+}
+
+enum PluginStatus {
+  DRAFT = 'draft',                  // 草稿
+  PUBLISHED = 'published',          // 已发布
+  DEPRECATED = 'deprecated',        // 已废弃
+}
+
+interface PluginConfig {
+  priority?: number;                // 优先级（同阶段多插件时的执行顺序）
+  scope?: PluginScope;              // 作用域
+  options?: Record<string, any>;    // 自定义配置
+}
+
+enum PluginScope {
+  GLOBAL = 'global',                // 全局插件
+  MODULE = 'module',                // 模块级
+  MODEL = 'model',                  // 模型级
+}
+```
+
+### 2.2 代码块定义 (CodeBlockDefinition)
+
+```typescript
+interface CodeBlockDefinition {
+  id: string;
+  pluginId: string;                 // 所属插件
+  hook: HookStage;                  // 钩子阶段
+  code: string;                     // TypeScript 代码片段
+
+  // 代码块配置
+  isAsync: boolean;                 // 是否异步
+  abortOnError: boolean;            // 出错时是否中止操作
+  condition?: string;               // 执行条件表达式
+
+  // 代码元数据
+  parameters?: ParameterDefinition[]; // 可配置参数
+}
+
 enum HookStage {
-  BEFORE_CREATE = 'beforeCreate',   // 创建前
-  AFTER_CREATE = 'afterCreate',     // 创建后
-  BEFORE_UPDATE = 'beforeUpdate',   // 更新前
-  AFTER_UPDATE = 'afterUpdate',     // 更新后
-  BEFORE_DELETE = 'beforeDelete',   // 删除前
-  AFTER_DELETE = 'afterDelete',     // 删除后
-  BEFORE_QUERY = 'beforeQuery',     // 查询前
-  AFTER_QUERY = 'afterQuery',       // 查询后
-  ON_ERROR = 'onError',             // 发生错误时
+  BEFORE_CREATE = 'beforeCreate',
+  AFTER_CREATE = 'afterCreate',
+  BEFORE_UPDATE = 'beforeUpdate',
+  AFTER_UPDATE = 'afterUpdate',
+  BEFORE_DELETE = 'beforeDelete',
+  AFTER_DELETE = 'afterDelete',
+  BEFORE_QUERY = 'beforeQuery',
+  AFTER_QUERY = 'afterQuery',
+}
+
+interface ParameterDefinition {
+  name: string;                     // 参数名
+  type: string;                     // 参数类型
+  defaultValue?: any;               // 默认值
+  description?: string;             // 描述
 }
 ```
 
-### 2.2 钩子上下文
+### 2.3 依赖定义 (DependencyDefinition)
 
 ```typescript
-interface HookContext {
-  // 模型信息
-  modelCode: string;              // 模型代码
-  modelId: string;                // 模型ID
+interface DependencyDefinition {
+  name: string;                     // 依赖名称（在代码块中使用）
+  type: DependencyType;             // 依赖类型
+  importPath: string;               // 导入路径
+  importName?: string;              // 导入名称（默认同 name）
+}
 
-  // 操作信息
-  actionCode: string;             // 操作代码
-  stage: HookStage;               // 当前钩子阶段
-
-  // 数据
-  data?: Record<string, any>;     // 操作数据（创建/更新时）
-  result?: any;                   // 操作结果（after* 钩子）
-  error?: Error;                  // 错误信息（onError 钩子）
-
-  // 请求上下文
-  tenantCode: string;             // 租户代码
-  userId?: string;                // 当前用户ID
-  userName?: string;              // 当前用户姓名
-
-  // 元数据（插件间传递数据）
-  metadata?: Record<string, any>;
+enum DependencyType {
+  SERVICE = 'service',              // 服务依赖（通过 DI 注入）
+  UTILITY = 'utility',              // 工具函数（静态导入）
+  TYPE = 'type',                    // 类型定义
 }
 ```
 
-### 2.3 钩子执行结果
+### 2.4 插件绑定 (PluginBinding)
 
 ```typescript
-interface HookResult {
-  // 是否中止后续操作
-  abort?: boolean;
-  // 中止原因
-  abortReason?: string;
-  // 修改后的数据（会传递给下一个钩子）
-  data?: Record<string, any>;
-  // 附加元数据
-  metadata?: Record<string, any>;
-}
-```
+interface PluginBinding {
+  id: string;
+  pluginId: string;                 // 插件ID
+  codeBlockId: string;              // 代码块ID
 
-### 2.4 插件接口
+  // 绑定目标
+  targetType: BindingTargetType;    // 绑定类型
+  targetPattern: string;            // 目标模式（支持通配符）
 
-```typescript
-interface IPlugin {
-  // 唯一标识
-  code: string;
-  // 插件名称
-  name: string;
-  // 描述
-  description?: string;
-  // 版本
-  version: string;
-  // 是否启用
-  enabled: boolean;
-  // 优先级（数字越小优先级越高）
-  priority?: number;
-
-  // 生命周期方法
-  onInit?(): Promise<void>;
-  onDestroy?(): Promise<void>;
-
-  // 获取钩子处理器
-  getHook(stage: HookStage): HookHandler | undefined;
-  getAllHooks(): Map<HookStage, HookHandler>;
+  // 绑定配置
+  enabled: boolean;                 // 是否启用
+  priority?: number;                // 覆盖插件默认优先级
+  parameterValues?: Record<string, any>; // 参数值
 }
 
-type HookHandler = (context: HookContext) => Promise<HookResult | void>;
+enum BindingTargetType {
+  MODEL = 'model',                  // 绑定到模型（如 "user"）
+  ACTION = 'action',                // 绑定到操作（如 "user.create"）
+  MODULE = 'module',                // 绑定到模块（如 "crm.*"）
+}
 ```
 
 ---
 
 ## 3. 服务设计
 
-### 3.1 PluginRegistryService
+### 3.1 服务列表
+
+| 服务 | 职责 |
+|-----|------|
+| PluginService | 插件定义的 CRUD、发布 |
+| CodeBlockService | 代码块的 CRUD |
+| PluginBindingService | 插件绑定的 CRUD |
+| PluginSnapshotProvider | 为代码生成器提供插件快照 |
+
+### 3.2 PluginService
 
 ```typescript
 @Injectable()
-export class PluginRegistryService {
-  private plugins: Map<string, PluginRegistration> = new Map();
+export class PluginService {
+  constructor(
+    @InjectRepository({ entity: PluginDefinitionEntity })
+    private readonly pluginRepository: PluginRepository,
+  ) {}
 
-  // 注册插件
-  register(plugin: IPlugin, config?: PluginConfig): void;
+  // 创建插件
+  async create(dto: CreatePluginDto): Promise<PluginDefinitionEntity>;
 
-  // 注销插件
-  unregister(pluginCode: string): void;
+  // 更新插件
+  async update(id: string, dto: UpdatePluginDto): Promise<PluginDefinitionEntity>;
 
-  // 获取插件
-  getPlugin(pluginCode: string): IPlugin | undefined;
+  // 根据代码查询
+  async findByCode(code: string): Promise<PluginDefinitionEntity | null>;
 
-  // 获取所有启用的插件
-  getEnabledPlugins(): IPlugin[];
+  // 获取已发布的插件列表
+  async findPublished(): Promise<PluginDefinitionEntity[]>;
 
-  // 获取指定阶段的插件（按优先级排序）
-  getPluginsForStage(stage: HookStage): IPlugin[];
+  // 发布插件
+  async publish(id: string): Promise<PluginDefinitionEntity>;
 
-  // 启用/禁用插件
-  setPluginEnabled(pluginCode: string, enabled: boolean): void;
-
-  // 更新插件优先级
-  setPluginPriority(pluginCode: string, priority: number): void;
-
-  // 获取插件列表
-  listPlugins(): PluginInfo[];
-}
-
-interface PluginRegistration {
-  plugin: IPlugin;
-  config: PluginConfig;
-  registeredAt: Date;
-}
-
-interface PluginConfig {
-  code: string;
-  enabled: boolean;
-  priority?: number;
-  options?: Record<string, any>;
-}
-
-interface PluginInfo {
-  code: string;
-  name: string;
-  version: string;
-  enabled: boolean;
-  priority: number;
-  supportedStages: HookStage[];
+  // 废弃插件
+  async deprecate(id: string): Promise<void>;
 }
 ```
 
-### 3.2 PluginExecutorService
+### 3.3 CodeBlockService
 
 ```typescript
 @Injectable()
-export class PluginExecutorService {
-  constructor(private readonly pluginRegistry: PluginRegistryService) {}
+export class CodeBlockService {
+  // 创建代码块
+  async create(pluginId: string, dto: CreateCodeBlockDto): Promise<CodeBlockEntity>;
 
-  // 执行指定阶段的所有钩子
-  async executeHooks(stage: HookStage, context: HookContext, config?: HookExecutionConfig): Promise<HookExecutionResult>;
+  // 更新代码块
+  async update(id: string, dto: UpdateCodeBlockDto): Promise<CodeBlockEntity>;
 
-  // 快捷方法
-  async executeBeforeCreate(context: HookContext): Promise<HookExecutionResult>;
-  async executeAfterCreate(context: HookContext): Promise<HookExecutionResult>;
-  async executeBeforeUpdate(context: HookContext): Promise<HookExecutionResult>;
-  async executeAfterUpdate(context: HookContext): Promise<HookExecutionResult>;
-  async executeBeforeDelete(context: HookContext): Promise<HookExecutionResult>;
-  async executeAfterDelete(context: HookContext): Promise<HookExecutionResult>;
-  async executeBeforeQuery(context: HookContext): Promise<HookExecutionResult>;
-  async executeAfterQuery(context: HookContext): Promise<HookExecutionResult>;
-  async executeOnError(context: HookContext): Promise<HookExecutionResult>;
+  // 获取插件的所有代码块
+  async findByPluginId(pluginId: string): Promise<CodeBlockEntity[]>;
+
+  // 验证代码块语法
+  async validateSyntax(code: string): Promise<ValidationResult>;
+
+  // 删除代码块
+  async delete(id: string): Promise<void>;
 }
 
-interface HookExecutionConfig {
-  timeout?: number;           // 超时时间（毫秒），默认 30000
-  continueOnError?: boolean;  // 错误时是否继续执行
-  async?: boolean;            // 是否异步执行（不等待结果）
+interface ValidationResult {
+  valid: boolean;
+  errors?: Array<{ line: number; message: string }>;
+}
+```
+
+### 3.4 PluginBindingService
+
+```typescript
+@Injectable()
+export class PluginBindingService {
+  // 创建绑定
+  async create(dto: CreateBindingDto): Promise<PluginBindingEntity>;
+
+  // 获取模型的所有绑定
+  async findByModel(modelCode: string): Promise<PluginBindingEntity[]>;
+
+  // 获取操作的所有绑定（包括模型级和模块级继承）
+  async findByAction(modelCode: string, actionCode: string): Promise<ResolvedBinding[]>;
+
+  // 批量更新绑定
+  async batchUpdate(bindings: UpdateBindingDto[]): Promise<void>;
+
+  // 启用/禁用绑定
+  async setEnabled(id: string, enabled: boolean): Promise<void>;
 }
 
-interface HookExecutionResult {
-  success: boolean;           // 是否成功
-  aborted: boolean;           // 是否被中止
-  abortReason?: string;       // 中止原因
-  modifiedData?: Record<string, any>; // 修改后的数据
-  errors: Array<{ pluginCode: string; error: string }>;
-  executedPlugins: string[];  // 已执行的插件
+interface ResolvedBinding {
+  binding: PluginBindingEntity;
+  plugin: PluginDefinitionEntity;
+  codeBlock: CodeBlockEntity;
+  priority: number;                 // 解析后的优先级
+}
+```
+
+### 3.5 PluginSnapshotProvider
+
+```typescript
+@Injectable()
+export class PluginSnapshotProvider {
+  constructor(
+    private readonly pluginService: PluginService,
+    private readonly codeBlockService: CodeBlockService,
+    private readonly bindingService: PluginBindingService,
+  ) {}
+
+  /**
+   * 获取模型操作的插件代码块
+   * 供代码生成器在生成 Service 时使用
+   */
+  async getActionPlugins(
+    modelCode: string,
+    actionCode: string,
+  ): Promise<ActionPluginSnapshot> {
+    const bindings = await this.bindingService.findByAction(modelCode, actionCode);
+
+    // 按钩子阶段分组，按优先级排序
+    const hookGroups = new Map<HookStage, ResolvedCodeBlock[]>();
+
+    for (const { plugin, codeBlock, priority } of bindings) {
+      const stage = codeBlock.hook;
+      if (!hookGroups.has(stage)) {
+        hookGroups.set(stage, []);
+      }
+      hookGroups.get(stage)!.push({
+        pluginCode: plugin.code,
+        code: codeBlock.code,
+        isAsync: codeBlock.isAsync,
+        abortOnError: codeBlock.abortOnError,
+        condition: codeBlock.condition,
+        priority,
+      });
+    }
+
+    // 每个阶段按优先级排序
+    for (const [stage, blocks] of hookGroups) {
+      blocks.sort((a, b) => a.priority - b.priority);
+    }
+
+    return {
+      modelCode,
+      actionCode,
+      hooks: hookGroups,
+      dependencies: this.collectDependencies(bindings),
+    };
+  }
+
+  /**
+   * 收集所有插件的依赖
+   */
+  private collectDependencies(bindings: ResolvedBinding[]): DependencyDefinition[] {
+    const deps = new Map<string, DependencyDefinition>();
+    for (const { plugin } of bindings) {
+      for (const dep of plugin.dependencies) {
+        deps.set(dep.name, dep);
+      }
+    }
+    return Array.from(deps.values());
+  }
+}
+
+interface ActionPluginSnapshot {
+  modelCode: string;
+  actionCode: string;
+  hooks: Map<HookStage, ResolvedCodeBlock[]>;
+  dependencies: DependencyDefinition[];
+}
+
+interface ResolvedCodeBlock {
+  pluginCode: string;
+  code: string;
+  isAsync: boolean;
+  abortOnError: boolean;
+  condition?: string;
+  priority: number;
 }
 ```
 
 ---
 
-## 4. 执行流程
+## 4. 代码生成集成
 
-### 4.1 钩子执行顺序
+### 4.1 生成流程
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        插件执行流程                              │
-└─────────────────────────────────────────────────────────────────┘
-
-1. 获取该阶段启用的插件列表
-2. 按优先级排序（priority 小的先执行）
-3. 依次执行每个插件的钩子
-
-┌─────────────────────────────────────────────────────────────────┐
-│  Plugin A (priority: 1)                                        │
-│  ┌─────────────┐                                               │
-│  │ beforeCreate│ ──▶ 修改数据 / 返回 abort                      │
-│  └─────────────┘                                               │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼ 传递修改后的数据
-┌─────────────────────────────────────────────────────────────────┐
-│  Plugin B (priority: 10)                                       │
-│  ┌─────────────┐                                               │
-│  │ beforeCreate│ ──▶ 继续处理 / 验证数据                        │
-│  └─────────────┘                                               │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  执行数据库操作（如果没有被 abort）                               │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  CodeGenerator  │     │ PluginSnapshot  │     │   PluginModule  │
+│    Service      │     │    Provider     │     │   (数据库)       │
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │                       │                       │
+         │  1. 请求 user.create  │                       │
+         │      的插件配置       │                       │
+         │──────────────────────>│                       │
+         │                       │  2. 查询绑定          │
+         │                       │──────────────────────>│
+         │                       │                       │
+         │                       │  3. 返回绑定数据      │
+         │                       │<──────────────────────│
+         │                       │                       │
+         │  4. 返回插件快照      │                       │
+         │      (按阶段分组)     │                       │
+         │<──────────────────────│                       │
+         │                       │                       │
+         │  5. 生成 Service 代码 │                       │
+         │     (内联插件调用)    │                       │
 ```
 
-### 4.2 数据传递
+### 4.2 生成的代码结构
+
+原始（无插件）：
 
 ```typescript
-// Plugin A 的钩子
-async beforeCreate(context: HookContext): Promise<HookResult> {
-  // 修改数据
-  return {
-    data: {
-      ...context.data,
-      processedBy: 'PluginA',
-    },
-    metadata: {
-      pluginAExecuted: true,
-    },
-  };
-}
-
-// Plugin B 的钩子（接收 Plugin A 修改后的数据）
-async beforeCreate(context: HookContext): Promise<HookResult> {
-  console.log(context.data.processedBy); // 'PluginA'
-  console.log(context.metadata.pluginAExecuted); // true
-
-  return {
-    data: {
-      ...context.data,
-      processedBy: 'PluginB',
-    },
-  };
-}
-```
-
-### 4.3 中止操作
-
-```typescript
-// 验证插件：如果数据不符合要求，中止操作
-async beforeCreate(context: HookContext): Promise<HookResult> {
-  if (context.data.amount > 10000) {
-    return {
-      abort: true,
-      abortReason: '金额超过限制，需要审批',
-    };
+@Injectable()
+export class UserService {
+  async create(dto: CreateUserDto): Promise<UserEntity> {
+    const entity = this.repository.create(dto);
+    return await this.repository.save(entity);
   }
-  return {};
+}
+```
+
+生成后（包含插件）：
+
+```typescript
+@Injectable()
+export class UserService {
+  constructor(
+    private readonly repository: UserRepository,
+    // 插件依赖自动注入
+    private readonly logService: LogService,
+    private readonly notificationService: NotificationService,
+  ) {}
+
+  async create(dto: CreateUserDto): Promise<UserEntity> {
+    // ═══════════════════════════════════════
+    // beforeCreate hooks
+    // ═══════════════════════════════════════
+
+    // [Plugin: validation] priority: 10
+    {
+      if (dto.email && !this.isValidEmail(dto.email)) {
+        throw new BadRequestException('邮箱格式不正确');
+      }
+    }
+
+    // [Plugin: default-values] priority: 20
+    {
+      dto.status = dto.status ?? 'active';
+      dto.createdAt = new Date();
+    }
+
+    // ═══════════════════════════════════════
+    // Core Operation
+    // ═══════════════════════════════════════
+    const entity = this.repository.create(dto);
+    const result = await this.repository.save(entity);
+
+    // ═══════════════════════════════════════
+    // afterCreate hooks
+    // ═══════════════════════════════════════
+
+    // [Plugin: audit-log] priority: 100
+    {
+      await this.logService.log({
+        action: 'CREATE',
+        model: 'user',
+        recordId: result.id,
+        data: dto,
+        userId: this.contextService.getUserId(),
+      });
+    }
+
+    // [Plugin: notification] priority: 200 (async, non-blocking)
+    this.notificationService.sendWelcomeEmail(result.email).catch(e => {
+      console.error('Notification failed:', e);
+    });
+
+    return result;
+  }
+}
+```
+
+### 4.3 条件执行
+
+```typescript
+// 代码块定义
+{
+  hook: 'afterCreate',
+  code: 'await this.notificationService.sendWelcomeEmail(result.email);',
+  condition: "dto.sendWelcomeEmail === true"
+}
+
+// 生成的代码
+if (dto.sendWelcomeEmail === true) {
+  await this.notificationService.sendWelcomeEmail(result.email);
 }
 ```
 
 ### 4.4 错误处理
 
 ```typescript
-// 默认行为：单个插件出错时中止后续插件执行
-// 可配置 continueOnError: true 继续执行
-
-// onError 钩子用于处理操作过程中的错误
-async onError(context: HookContext): Promise<HookResult> {
-  // 记录错误日志
-  await this.logService.error({
-    modelCode: context.modelCode,
-    action: context.actionCode,
-    error: context.error.message,
-    userId: context.userId,
-  });
-  return {};
-}
-```
-
----
-
-## 5. 插件实现示例
-
-### 5.1 基础插件类
-
-```typescript
-export abstract class BasePlugin implements IPlugin {
-  abstract code: string;
-  abstract name: string;
-  description?: string;
-  version: string = '1.0.0';
-  enabled: boolean = true;
-  priority: number = 100;
-
-  protected hooks: Map<HookStage, HookHandler> = new Map();
-
-  async onInit(): Promise<void> {}
-  async onDestroy(): Promise<void> {}
-
-  getHook(stage: HookStage): HookHandler | undefined {
-    return this.hooks.get(stage);
-  }
-
-  getAllHooks(): Map<HookStage, HookHandler> {
-    return this.hooks;
-  }
-
-  protected registerHook(stage: HookStage, handler: HookHandler): void {
-    this.hooks.set(stage, handler.bind(this));
-  }
-}
-```
-
-### 5.2 操作日志插件
-
-```typescript
-@Injectable()
-export class AuditLogPlugin extends BasePlugin {
-  code = 'audit-log';
-  name = '操作日志插件';
-  description = '记录数据变更操作日志';
-  priority = 1000; // 低优先级，在其他插件之后执行
-
-  constructor(private readonly logService: LogService) {
-    super();
-    this.registerHook(HookStage.AFTER_CREATE, this.afterCreate);
-    this.registerHook(HookStage.AFTER_UPDATE, this.afterUpdate);
-    this.registerHook(HookStage.AFTER_DELETE, this.afterDelete);
-  }
-
-  private async afterCreate(context: HookContext): Promise<HookResult> {
-    await this.logService.create({
-      action: 'CREATE',
-      modelCode: context.modelCode,
-      recordId: context.result?.id,
-      data: context.data,
-      userId: context.userId,
-      userName: context.userName,
-      tenantCode: context.tenantCode,
-    });
-    return {};
-  }
-
-  private async afterUpdate(context: HookContext): Promise<HookResult> {
-    await this.logService.create({
-      action: 'UPDATE',
-      modelCode: context.modelCode,
-      recordId: context.data?.id,
-      data: context.data,
-      userId: context.userId,
-      userName: context.userName,
-      tenantCode: context.tenantCode,
-    });
-    return {};
-  }
-
-  private async afterDelete(context: HookContext): Promise<HookResult> {
-    await this.logService.create({
-      action: 'DELETE',
-      modelCode: context.modelCode,
-      recordId: context.data?.id,
-      userId: context.userId,
-      userName: context.userName,
-      tenantCode: context.tenantCode,
-    });
-    return {};
-  }
-}
-```
-
-### 5.3 数据脱敏插件
-
-```typescript
-@Injectable()
-export class DataMaskingPlugin extends BasePlugin {
-  code = 'data-masking';
-  name = '数据脱敏插件';
-  priority = 50;
-
-  // 敏感字段配置
-  private sensitiveFields = {
-    phone: (v: string) => v.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2'),
-    idCard: (v: string) => v.replace(/(\d{4})\d{10}(\d{4})/, '$1**********$2'),
-    email: (v: string) => v.replace(/(.{2}).*(@.*)/, '$1***$2'),
-  };
-
-  constructor() {
-    super();
-    this.registerHook(HookStage.AFTER_QUERY, this.afterQuery);
-  }
-
-  private async afterQuery(context: HookContext): Promise<HookResult> {
-    if (!context.result) return {};
-
-    const masked = Array.isArray(context.result)
-      ? context.result.map(item => this.maskRecord(item))
-      : this.maskRecord(context.result);
-
-    return { data: masked };
-  }
-
-  private maskRecord(record: Record<string, any>): Record<string, any> {
-    const masked = { ...record };
-    for (const [field, maskFn] of Object.entries(this.sensitiveFields)) {
-      if (masked[field]) {
-        masked[field] = maskFn(masked[field]);
-      }
-    }
-    return masked;
-  }
-}
-```
-
-### 5.4 业务验证插件
-
-```typescript
-@Injectable()
-export class OrderValidationPlugin extends BasePlugin {
-  code = 'order-validation';
-  name = '订单验证插件';
-  priority = 10;
-
-  constructor(private readonly inventoryService: InventoryService) {
-    super();
-    this.registerHook(HookStage.BEFORE_CREATE, this.beforeCreate);
-  }
-
-  private async beforeCreate(context: HookContext): Promise<HookResult> {
-    // 仅处理订单模型
-    if (context.modelCode !== 'order') return {};
-
-    const { productId, quantity } = context.data;
-
-    // 检查库存
-    const stock = await this.inventoryService.getStock(productId);
-    if (stock < quantity) {
-      return {
-        abort: true,
-        abortReason: `库存不足，当前库存: ${stock}`,
-      };
-    }
-
-    // 预扣库存
-    await this.inventoryService.reserve(productId, quantity);
-
-    return {
-      metadata: {
-        stockReserved: true,
-        reservedQuantity: quantity,
-      },
-    };
-  }
-}
-```
-
----
-
-## 6. 插件配置
-
-### 6.1 模型级别配置
-
-通过操作定义（ActionDefinition）配置钩子：
-
-```typescript
-// 模型的操作定义
+// abortOnError: true（默认）- 错误时中止操作
 {
-  "code": "create",
-  "name": "创建订单",
-  "actionType": "create",
-  "hooks": {
-    "before": ["order-validation", "inventory-check"],
-    "after": ["audit-log", "notification"]
+  if (dto.amount > 10000) {
+    throw new BadRequestException('金额超过限制');
+  }
+}
+
+// abortOnError: false - 错误时继续执行
+try {
+  await this.logService.log({ ... });
+} catch (e) {
+  console.error('[audit-log] Hook failed:', e);
+}
+```
+
+---
+
+## 5. 插件定义示例
+
+### 5.1 审计日志插件
+
+```json
+{
+  "code": "audit-log",
+  "name": "审计日志插件",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "name": "logService",
+      "type": "service",
+      "importPath": "@app/services/log.service",
+      "importName": "LogService"
+    }
+  ],
+  "codeBlocks": [
+    {
+      "hook": "afterCreate",
+      "isAsync": true,
+      "abortOnError": false,
+      "code": "await this.logService.log({ action: 'CREATE', model: '${modelCode}', recordId: result.id, data: dto, userId: this.contextService.getUserId() });"
+    },
+    {
+      "hook": "afterUpdate",
+      "isAsync": true,
+      "abortOnError": false,
+      "code": "await this.logService.log({ action: 'UPDATE', model: '${modelCode}', recordId: dto.id, data: dto, userId: this.contextService.getUserId() });"
+    },
+    {
+      "hook": "afterDelete",
+      "isAsync": true,
+      "abortOnError": false,
+      "code": "await this.logService.log({ action: 'DELETE', model: '${modelCode}', recordId: id, userId: this.contextService.getUserId() });"
+    }
+  ],
+  "config": {
+    "priority": 100,
+    "scope": "global"
   }
 }
 ```
 
-### 6.2 全局插件配置
+### 5.2 数据脱敏插件
 
-```typescript
-// 插件模块配置
-@Module({
-  providers: [
-    PluginRegistryService,
-    PluginExecutorService,
-    // 注册内置插件
-    AuditLogPlugin,
-    DataMaskingPlugin,
+```json
+{
+  "code": "data-masking",
+  "name": "数据脱敏插件",
+  "version": "1.0.0",
+  "dependencies": [
     {
-      provide: 'PLUGIN_INITIALIZER',
-      useFactory: (registry: PluginRegistryService, ...plugins: IPlugin[]) => {
-        plugins.forEach(plugin => registry.register(plugin));
-      },
-      inject: [PluginRegistryService, AuditLogPlugin, DataMaskingPlugin],
-    },
+      "name": "maskUtils",
+      "type": "utility",
+      "importPath": "@app/utils/mask",
+      "importName": "MaskUtils"
+    }
   ],
-})
-export class PluginModule {}
+  "codeBlocks": [
+    {
+      "hook": "afterQuery",
+      "isAsync": false,
+      "abortOnError": false,
+      "code": "result = Array.isArray(result) ? result.map(r => maskUtils.maskSensitiveFields(r, ['phone', 'idCard', 'email'])) : maskUtils.maskSensitiveFields(result, ['phone', 'idCard', 'email']);",
+      "parameters": [
+        {
+          "name": "sensitiveFields",
+          "type": "string[]",
+          "defaultValue": ["phone", "idCard", "email"],
+          "description": "需要脱敏的字段列表"
+        }
+      ]
+    }
+  ],
+  "config": {
+    "priority": 50,
+    "scope": "model"
+  }
+}
+```
+
+### 5.3 业务验证插件（模型专用）
+
+```json
+{
+  "code": "order-validation",
+  "name": "订单验证插件",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "name": "inventoryService",
+      "type": "service",
+      "importPath": "@app/modules/inventory/inventory.service",
+      "importName": "InventoryService"
+    }
+  ],
+  "codeBlocks": [
+    {
+      "hook": "beforeCreate",
+      "isAsync": true,
+      "abortOnError": true,
+      "code": "const stock = await this.inventoryService.getStock(dto.productId); if (stock < dto.quantity) { throw new BadRequestException(`库存不足，当前库存: ${stock}`); } await this.inventoryService.reserve(dto.productId, dto.quantity);"
+    }
+  ],
+  "config": {
+    "priority": 10,
+    "scope": "model"
+  }
+}
 ```
 
 ---
 
-## 7. 执行配置
+## 6. 绑定配置
 
-### 7.1 超时控制
+### 6.1 绑定模式
 
 ```typescript
-// 默认超时 30 秒
-await pluginExecutor.executeHooks(HookStage.BEFORE_CREATE, context, {
-  timeout: 5000, // 5 秒超时
-});
+// 绑定到单个模型的所有操作
+{
+  targetType: 'model',
+  targetPattern: 'user',        // 匹配 user 模型
+}
+
+// 绑定到模型的特定操作
+{
+  targetType: 'action',
+  targetPattern: 'user.create', // 匹配 user 模型的 create 操作
+}
+
+// 绑定到模块（通配符）
+{
+  targetType: 'module',
+  targetPattern: 'crm.*',       // 匹配 crm 模块下所有模型
+}
+
+// 全局绑定
+{
+  targetType: 'module',
+  targetPattern: '*',           // 匹配所有模型
+}
 ```
 
-### 7.2 错误处理策略
+### 6.2 优先级规则
+
+当多个插件绑定到同一个操作的同一个钩子阶段时，按以下规则确定执行顺序：
+
+1. 绑定级优先级（如果指定）
+2. 插件级优先级
+3. 默认优先级（100）
+
+数字越小，优先级越高，越先执行。
+
+---
+
+## 7. API 设计
+
+### 7.1 插件管理 API
+
+| 方法 | 路径 | 说明 |
+|-----|------|------|
+| GET | /api/v1/plugins | 获取插件列表 |
+| GET | /api/v1/plugins/:code | 获取插件详情（含代码块） |
+| POST | /api/v1/plugins | 创建插件 |
+| PUT | /api/v1/plugins/:code | 更新插件 |
+| DELETE | /api/v1/plugins/:code | 删除插件 |
+| POST | /api/v1/plugins/:code/publish | 发布插件 |
+| POST | /api/v1/plugins/:code/deprecate | 废弃插件 |
+
+### 7.2 代码块 API
+
+| 方法 | 路径 | 说明 |
+|-----|------|------|
+| GET | /api/v1/plugins/:code/blocks | 获取代码块列表 |
+| POST | /api/v1/plugins/:code/blocks | 创建代码块 |
+| PUT | /api/v1/plugins/:code/blocks/:blockId | 更新代码块 |
+| DELETE | /api/v1/plugins/:code/blocks/:blockId | 删除代码块 |
+| POST | /api/v1/plugins/:code/blocks/validate | 验证代码块语法 |
+
+### 7.3 绑定 API
+
+| 方法 | 路径 | 说明 |
+|-----|------|------|
+| GET | /api/v1/plugin-bindings | 获取绑定列表 |
+| GET | /api/v1/plugin-bindings/model/:modelCode | 获取模型的绑定 |
+| POST | /api/v1/plugin-bindings | 创建绑定 |
+| PUT | /api/v1/plugin-bindings/:id | 更新绑定 |
+| DELETE | /api/v1/plugin-bindings/:id | 删除绑定 |
+| POST | /api/v1/plugin-bindings/batch | 批量更新绑定 |
+
+---
+
+## 8. 与预览服务的交互
+
+预览服务在精确预览模式下也需要考虑插件：
 
 ```typescript
-// 默认：出错即停止
-await pluginExecutor.executeHooks(HookStage.BEFORE_CREATE, context);
+// AccuratePreviewService
+async execute(request: AccuratePreviewRequest): Promise<any> {
+  // 1. 获取插件配置
+  const pluginSnapshot = await this.pluginSnapshotProvider.getActionPlugins(
+    request.modelCode,
+    request.actionCode,
+  );
 
-// 继续执行：即使某个插件出错也继续
-await pluginExecutor.executeHooks(HookStage.AFTER_CREATE, context, {
-  continueOnError: true,
-});
-```
+  // 2. 生成包含插件的代码
+  const code = await this.codeGenerator.generateServiceMethod({
+    model: request.model,
+    action: request.action,
+    plugins: pluginSnapshot,
+  });
 
-### 7.3 异步执行
-
-```typescript
-// 不等待结果（适用于日志、通知等非关键操作）
-await pluginExecutor.executeHooks(HookStage.AFTER_CREATE, context, {
-  async: true,
-});
+  // 3. 编译执行
+  const compiled = await this.esbuildCompiler.compile(code);
+  return await this.sandbox.execute(compiled, request.data);
+}
 ```
 
 ---
 
-## 8. 相关文档
+## 9. 相关文档
 
 - [服务层概述](./overview.md)
-- [运行时服务设计](./runtime-service.md)
 - [元数据服务设计](./meta-service.md)
+- [预览服务设计](./runtime-service.md)
+- [代码生成设计](../05-publish/code-generation.md)
