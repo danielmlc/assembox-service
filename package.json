@@ -1,37 +1,44 @@
 {
-  "name": "assembox",
-  "repository": {
-    "url": "https://github.com/cabin-in/webpages-packer"
-  },
+  "name": "assembox-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Assembox 低代码平台",
   "scripts": {
-    "bootstrap": "pnpm i",
-    "lint": "eslint --fix packages --ext .js --ext .jsx",
-    "dev:core": "pnpm --filter assembox-core run dev",
-    "build:core": "pnpm --filter assembox-core run build",
-    "dev:desktop": "pnpm --filter assembox-desktop run dev",
-    "build:desktop": "pnpm --filter assembox-desktop run build",
-    "dev": "pnpm --filter vue-assembox-docs-website run dev",
-    "build": "pnpm --filter vue-assembox-docs-website run build",
-    "start": "pnpm --filter vue-assembox-docs-website run start",
-    "dev:demo": "pnpm --filter desktop-demo run dev",
-    "start:demo": "pnpm --filter desktop-demo run start"
+    "preinstall": "npx only-allow pnpm",
+    "bootstrap": "pnpm install",
+    "clean": "pnpm -r exec rimraf dist node_modules",
+    "clean:dist": "pnpm -r exec rimraf dist",
+    "dev:storage": "pnpm --filter assembox-storage run start:dev",
+    "build:storage": "pnpm --filter assembox-storage run build",
+    "start:storage": "pnpm --filter assembox-storage run start",
+    "build:services": "pnpm -r --filter './projects/*' run build",
+    "lint:backend": "eslint 'projects/**/*.ts' --fix",
+    "format": "prettier --write 'projects/**/*.{ts,json}'",
+    "typecheck": "pnpm -r --filter './projects/*' exec tsc --noEmit",
+    "ws:list": "pnpm list -r --depth -1"
   },
   "engines": {
-    "node": ">=12"
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
   },
+  "keywords": [
+    "lowcode",
+    "assembox",
+    "nestjs",
+    "monorepo"
+  ],
   "author": "danielmlc",
   "license": "ISC",
   "devDependencies": {
-    "pnpm": "^10.12.1",
-    "eslint": "^8.57.0",
-    "eslint-plugin-vue": "^9.23.0",
-    "eslint-config-standard": "^17.1.0",
-    "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-n": "^16.6.2",
-    "eslint-plugin-promise": "^6.1.1",
+    "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^7.3.1",
     "@typescript-eslint/parser": "^7.3.1",
-    "eslint-config-standard-with-typescript": "^22.0.0",
-    "typescript": "*"
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "prettier": "^3.2.5",
+    "rimraf": "^5.0.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   }
 }
