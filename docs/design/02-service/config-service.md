@@ -14,7 +14,7 @@
 
 - **配置 CRUD**: 配置的创建、读取、更新、删除
 - **版本管理**: 配置版本历史、回滚
-- **配置继承**: 四层配置的加载与合并
+- **配置继承**: 三层配置的加载与合并
 - **配置快照**: 为发布模块提供配置快照（**新增**）
 - **Git 同步**: 版本历史同步到 Gitea
 
@@ -54,10 +54,9 @@ interface ConfigEntity {
   configName: string;            // 配置名称
   configType: ConfigType;        // 配置类型
 
-  // 配置层级（四层结构）
+  // 配置层级（三层结构）
   scope: ConfigScope;            // 作用域
-  tenantGroup?: string;          // 租户组代码
-  tenant?: string;               // 租户代码
+  tenant?: string;               // 租户代码（仅 TENANT 层级需要）
 
   // 配置内容
   configData: object;            // JSON 配置数据
@@ -86,10 +85,9 @@ enum ConfigType {
 }
 
 enum ConfigScope {
-  SYSTEM = 'system',             // 系统级（只读）
-  GLOBAL = 'global',             // 全局级
-  TENANT_GROUP = 'tenant_group', // 租户组级
-  TENANT = 'tenant',             // 租户级
+  SYSTEM = 'system',             // 系统级（只读，平台预置）
+  GLOBAL = 'global',             // 全局级（产品默认配置）
+  TENANT = 'tenant',             // 租户级（租户定制）
 }
 
 enum ConfigStatus {
@@ -357,50 +355,64 @@ export class ConfigMergeService {
 }
 ```
 
-**配置加载与合并逻辑**:
+**配置加载与合并逻辑**（三层结构）:
 
 ```typescript
 async getMergedConfig(configCode: string, ctx: TenantContext): Promise<object> {
   // 1. 尝试获取租户配置
   const tenantConfig = await this.configCacheService.getConfig(configCode, ConfigScope.TENANT, ctx.tenant);
   if (tenantConfig && !tenantConfig.inherit) {
+    // 租户配置不继承上层，直接返回
     return tenantConfig.configData;
   }
 
-  // 2. 尝试获取租户组配置
+  // 2. 获取全局配置
   let mergedData = {};
-  if (ctx.tenantGroup) {
-    const groupConfig = await this.configCacheService.getConfig(configCode, ConfigScope.TENANT_GROUP, ctx.tenantGroup);
-    if (groupConfig) {
-      mergedData = groupConfig.configData;
-      if (!groupConfig.inherit) {
-        return tenantConfig ? this.mergeConfigs(mergedData, tenantConfig.configData) : mergedData;
-      }
-    }
-  }
-
-  // 3. 获取全局配置
   const globalConfig = await this.configCacheService.getConfig(configCode, ConfigScope.GLOBAL);
   if (globalConfig) {
-    mergedData = this.mergeConfigs(globalConfig.configData, mergedData);
+    mergedData = globalConfig.configData;
     if (!globalConfig.inherit) {
+      // 全局配置不继承系统配置
       return tenantConfig ? this.mergeConfigs(mergedData, tenantConfig.configData) : mergedData;
     }
   }
 
-  // 4. 获取系统配置
+  // 3. 获取系统配置（基础层，始终存在）
   const systemConfig = await this.configCacheService.getConfig(configCode, ConfigScope.SYSTEM);
   if (systemConfig) {
     mergedData = this.mergeConfigs(systemConfig.configData, mergedData);
   }
 
-  // 5. 合并租户配置的覆盖部分
+  // 4. 合并租户配置的覆盖部分
   if (tenantConfig) {
     mergedData = this.mergeConfigs(mergedData, tenantConfig.configData);
   }
 
   return mergedData;
 }
+```
+
+**合并流程图**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          三层配置合并流程                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   SYSTEM（系统配置）         GLOBAL（全局配置）         TENANT（租户配置）
+   ┌──────────────┐          ┌──────────────┐          ┌──────────────┐
+   │ 平台预置      │          │ 产品默认      │          │ 租户定制      │
+   │ 只读         │    ───▶  │ 可自定义      │    ───▶  │ 最高优先级    │
+   │ 基础配置      │          │ inherit: true │          │ inherit: true │
+   └──────────────┘          └──────────────┘          └──────────────┘
+         │                         │                         │
+         │         深度合并         │         深度合并         │
+         └─────────────────────────┴─────────────────────────┘
+                                   │
+                                   ▼
+                          ┌──────────────┐
+                          │  最终配置     │
+                          └──────────────┘
 ```
 
 **合并规则**:
@@ -445,9 +457,6 @@ assembox:config:_system:{configCode}
 
 # 全局配置
 assembox:config:_global:{configCode}
-
-# 租户组配置
-assembox:config:_groups:{tenantGroup}:{configCode}
 
 # 租户配置
 assembox:config:_tenants:{tenant}:{configCode}
@@ -606,17 +615,25 @@ Content-Type: application/json
 
 ## 5. 配置继承示例
 
-### 5.1 场景说明
+### 5.1 三层配置结构
+
+| 层级 | 说明 | 典型场景 |
+|-----|------|---------|
+| SYSTEM | 平台预置配置，只读 | 基础布局、默认样式、核心组件配置 |
+| GLOBAL | 产品级默认配置 | 产品的标准页面配置、业务规则 |
+| TENANT | 租户定制配置 | 租户特有的个性化需求 |
+
+### 5.2 场景说明
 
 **需求**: 用户列表页在不同层级有不同配置
 
 | 层级 | 配置内容 |
 |-----|---------|
-| system | 基础布局、默认分页 20 |
-| global | 添加搜索栏、自定义列 |
-| tenant_001 | 分页改为 50、隐藏某些列 |
+| SYSTEM | 基础布局、默认分页 20 |
+| GLOBAL | 添加搜索栏、自定义列 |
+| TENANT (tenant_001) | 分页改为 50、隐藏某些列 |
 
-### 5.2 各层级配置
+### 5.3 各层级配置
 
 **系统配置** (`_system/pages/page-user-list.json`):
 
@@ -670,7 +687,7 @@ Content-Type: application/json
 }
 ```
 
-### 5.3 合并结果
+### 5.4 合并结果
 
 ```json
 {

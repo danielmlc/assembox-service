@@ -176,7 +176,23 @@
 | 运行时读取 | Redis缓存 → (miss) → TiDB(**仅查published**) → OSS(**发布路径**) → 写入缓存 |
 | 版本回滚 | Gitea(历史) → OSS(恢复到发布路径) → TiDB(状态) → Redis(清除) |
 
-> **关键设计**: 草稿和已发布配置存储在不同的 OSS 路径，运行时只读取已发布配置，确保草稿不会被误读
+> **关键设计**: 草稿和已发布配置使用独立的 OSS key 字段，支持同时保存两个版本
+
+**双字段设计说明**:
+
+| 字段 | 用途 | 写入时机 | 读取场景 |
+|-----|------|---------|---------|
+| `draft_oss_key` | 草稿内容 | 设计器保存时 | 预览、继续编辑 |
+| `published_oss_key` | 已发布内容 | 发布时从 draft 复制 | 运行时、代码生成 |
+
+**场景示例**:
+
+| 场景 | draft_oss_key | published_oss_key | status |
+|-----|--------------|-------------------|--------|
+| 新建配置 | 有值 | 空 | draft |
+| 首次发布 | 有值 | 有值（从draft复制）| published |
+| 发布后继续编辑 | 更新 | 保持不变 | published |
+| 再次发布 | 有值 | 更新（从draft复制）| published |
 
 ### 2.3 数据流向图
 
@@ -470,10 +486,16 @@ CREATE TABLE ab_config (
     scope           VARCHAR(20) NOT NULL COMMENT 'system/global/tenant',
     tenant          VARCHAR(64) COMMENT 'scope=tenant时必填',
 
-    -- OSS存储
-    oss_key         VARCHAR(500) NOT NULL COMMENT 'OSS存储key',
-    content_hash    VARCHAR(64) COMMENT '内容MD5哈希，用于变更检测',
-    content_size    INT COMMENT '内容大小(字节)',
+    -- 草稿内容（设计器编辑用）
+    draft_oss_key       VARCHAR(500) COMMENT '草稿内容OSS key',
+    draft_content_hash  VARCHAR(64) COMMENT '草稿内容MD5哈希',
+    draft_size          INT COMMENT '草稿内容大小(字节)',
+    draft_updated_at    DATETIME COMMENT '草稿最后更新时间',
+
+    -- 已发布内容（运行时读取用）
+    published_oss_key       VARCHAR(500) COMMENT '已发布内容OSS key',
+    published_content_hash  VARCHAR(64) COMMENT '已发布内容MD5哈希',
+    published_size          INT COMMENT '已发布内容大小(字节)',
 
     -- 发布状态
     status          VARCHAR(20) NOT NULL DEFAULT 'draft' COMMENT 'draft/published',
@@ -499,6 +521,8 @@ CREATE TABLE ab_config (
 
 ### 3.5 配置发布历史表 (ab_config_history)
 
+> 记录每次发布的历史版本，用于回滚和审计
+
 ```sql
 CREATE TABLE ab_config_history (
     -- 主键
@@ -510,7 +534,7 @@ CREATE TABLE ab_config_history (
 
     -- 发布信息
     publish_version INT NOT NULL COMMENT '发布版本号',
-    oss_key         VARCHAR(500) NOT NULL COMMENT '历史版本OSS key',
+    published_oss_key VARCHAR(500) NOT NULL COMMENT '该版本的已发布内容OSS key',
     content_hash    VARCHAR(64) COMMENT '内容哈希',
 
     -- Git信息
@@ -576,7 +600,8 @@ erDiagram
         bigint version_id "版本ID(冗余)"
         varchar scope "system/global/tenant"
         varchar tenant "租户代码(scope=tenant时)"
-        varchar oss_key "OSS存储key"
+        varchar draft_oss_key "草稿内容OSS key"
+        varchar published_oss_key "已发布内容OSS key"
         varchar status "draft/published"
         int publish_version "发布版本号"
     }
@@ -586,7 +611,7 @@ erDiagram
         bigint config_id "配置ID"
         bigint component_id "组件ID"
         int publish_version "发布版本号"
-        varchar oss_key "历史版本OSS key"
+        varchar published_oss_key "该版本已发布内容OSS key"
         varchar git_commit_id "Git commit ID"
         datetime published_at "发布时间"
     }
@@ -702,6 +727,11 @@ interface ConfigInfo {
 
 type OssArea = 'draft' | 'published';
 
+/**
+ * 生成 OSS key
+ * - 草稿保存时：generateOssKey(config, 'draft') → 存入 draft_oss_key
+ * - 发布时：generateOssKey(config, 'published') → 存入 published_oss_key
+ */
 function generateOssKey(config: ConfigInfo, area: OssArea): string {
     const scopeSuffix = config.scope === 'system'
         ? '_system'
@@ -712,14 +742,49 @@ function generateOssKey(config: ConfigInfo, area: OssArea): string {
     return `assembox/${area}/${config.moduleCode}/${config.versionCode}/${config.componentType}/${config.componentCode}/${scopeSuffix}.json`;
 }
 
-// 草稿路径示例 (设计器使用):
+// 草稿路径示例 (存入 draft_oss_key，设计器/预览使用):
 // assembox/draft/order/V1/model/order_model/_system.json
 // assembox/draft/order/V1/table/order_table/_global.json
 
-// 发布路径示例 (运行时使用):
+// 发布路径示例 (存入 published_oss_key，运行时/代码生成使用):
 // assembox/published/order/V1/model/order_model/_system.json
 // assembox/published/order/V1/table/order_table/_global.json
 // assembox/published/order/V1/form/order_form/_tenant_T001.json
+```
+
+**发布流程中的 OSS 操作**:
+
+```typescript
+async function publishConfig(configId: string): Promise<void> {
+    const config = await db.findById(configId);
+
+    // 1. 读取草稿内容
+    const draftContent = await oss.get(config.draft_oss_key);
+
+    // 2. 生成发布路径 key
+    const publishedOssKey = generateOssKey(config, 'published');
+
+    // 3. 写入发布路径
+    await oss.put(publishedOssKey, draftContent);
+
+    // 4. 更新数据库
+    await db.update(configId, {
+        published_oss_key: publishedOssKey,
+        published_content_hash: md5(draftContent),
+        published_size: draftContent.length,
+        status: 'published',
+        publish_version: config.publish_version + 1,
+        published_at: new Date(),
+    });
+
+    // 5. 记录发布历史
+    await db.insert('ab_config_history', {
+        config_id: configId,
+        publish_version: config.publish_version + 1,
+        published_oss_key: publishedOssKey,
+        // ...
+    });
+}
 ```
 
 ### 5.3 批量查询优势
@@ -905,14 +970,14 @@ async function loadConfig(ctx: LoadContext): Promise<any> {
 }
 
 /**
- * 从指定 scope 加载配置
+ * 从指定 scope 加载配置（运行时）
  * 只查询 status=published 的配置
- * OSS 读取 published 路径
+ * OSS 读取 published_oss_key
  */
 async function loadConfigFromScope(scope: string, ctx: LoadContext): Promise<any> {
     // 从 TiDB 查询配置索引（只查 published 状态）
     const configIndex = await db.query(`
-        SELECT oss_key FROM ab_config
+        SELECT published_oss_key FROM ab_config
         WHERE module_code = ? AND version_code = ?
           AND component_type = ? AND component_code = ?
           AND scope = ? AND (tenant = ? OR tenant IS NULL)
@@ -920,10 +985,29 @@ async function loadConfigFromScope(scope: string, ctx: LoadContext): Promise<any
           AND is_removed = 0
     `, [ctx.moduleCode, ctx.versionCode, ctx.componentType, ctx.componentCode, scope, ctx.tenant]);
 
-    if (!configIndex) return null;
+    if (!configIndex || !configIndex.published_oss_key) return null;
 
-    // 从 OSS published 路径读取内容
-    return await oss.get(configIndex.oss_key);
+    // 从 OSS 读取已发布内容
+    return await oss.get(configIndex.published_oss_key);
+}
+
+/**
+ * 从指定 scope 加载草稿配置（预览用）
+ * OSS 读取 draft_oss_key
+ */
+async function loadDraftConfigFromScope(scope: string, ctx: LoadContext): Promise<any> {
+    const configIndex = await db.query(`
+        SELECT draft_oss_key FROM ab_config
+        WHERE module_code = ? AND version_code = ?
+          AND component_type = ? AND component_code = ?
+          AND scope = ? AND (tenant = ? OR tenant IS NULL)
+          AND is_removed = 0
+    `, [ctx.moduleCode, ctx.versionCode, ctx.componentType, ctx.componentCode, scope, ctx.tenant]);
+
+    if (!configIndex || !configIndex.draft_oss_key) return null;
+
+    // 从 OSS 读取草稿内容
+    return await oss.get(configIndex.draft_oss_key);
 }
 ```
 
@@ -1117,7 +1201,7 @@ Git 仓库分支结构：
 | 存储方式 | TiDB索引 + OSS内容 | 配置JSON体积大，分离存储 |
 | OSS路径设计 | draft/published 分离 | 草稿和发布内容隔离，运行时只读published路径 |
 | 合并时机 | 运行时查找 | 按优先级返回首个匹配配置 |
-| 草稿与发布隔离 | OSS路径分离 + 状态过滤 | 运行时只查published状态，只读published路径 |
+| 草稿与发布隔离 | 双字段设计 + OSS路径分离 | draft_oss_key 和 published_oss_key 分开存储，支持同时保存草稿和已发布版本 |
 | 系统层修改 | 可修改重发布 | 修改后重新发布影响所有下层 |
 | 组件类型 | 可扩展 | model/logic/api/page/table/form等，可按需扩展 |
 | Git分支策略 | 版本对应分支 | {module}/{version} 格式，版本隔离、历史清晰 |
