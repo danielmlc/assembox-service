@@ -491,34 +491,36 @@ interface PageMetadata {
 **目录**: [02-service/](./02-service/)
 
 **架构说明**：
-> 服务层在新架构下分为两种执行模式：
-> - **预览模式**：设计器实时预览，使用运行时解释执行（秒级生效）
-> - **生产模式**：发布后使用生成代码执行（性能最优）
+> 服务层负责**设计时**的元数据管理、配置管理和预览功能。
+> 发布相关功能（代码生成、构建、部署）由独立的 **发布服务** 实现，见 [五、发布流程设计](#五发布流程设计)。
 
 **职责**：
 - 元数据管理（模型、字段、关联）
 - 配置管理（页面配置、版本控制）
 - **预览引擎**（设计时实时预览）
-- **发布编排**（代码生成、CI/CD 触发）
-- 插件系统（编译时插桩）
+- 插件配置管理
+- **服务编排**（多步骤流程、条件分支、跨模型操作）
+- **为发布服务提供快照接口**
 
 **核心模块**：
 | 模块 | 职责 | 使用场景 |
 |-----|------|---------|
-| MetaModule | 元数据管理 | 设计时 |
-| ConfigModule | 配置 CRUD、版本管理 | 设计时 |
-| PreviewModule | 预览引擎（运行时解释）| 设计时 |
-| **PublishModule** | 代码生成、构建编排 | **发布时** |
-| PluginModule | 编译时插桩 | 发布时 |
+| MetaModule | 元数据管理、快照服务 | 设计时 |
+| ConfigModule | 配置 CRUD、版本管理、快照服务 | 设计时 |
+| PreviewModule | 预览引擎（代码生成 + 热重载）| 设计时 |
+| PluginModule | 插件配置管理 | 设计时 |
+| SchemaModule | DDL 生成、表结构管理 | 设计时 |
+| FlowModule | 服务编排（多步骤流程、条件分支、跨模型）| 设计时 |
 
 **文档索引**：
 | 文档 | 说明 |
 |-----|------|
-| [overview.md](./02-service/overview.md) | 服务层总览：架构转型、模块设计 |
+| [overview.md](./02-service/overview.md) | 服务层总览：模块设计、与发布服务交互 |
 | [config-service.md](./02-service/config-service.md) | 配置服务设计 |
 | [meta-service.md](./02-service/meta-service.md) | 元数据服务设计 |
-| [runtime-service.md](./02-service/runtime-service.md) | 预览服务设计（原运行时服务，已降级） |
-| [plugin-service.md](./02-service/plugin-service.md) | 插件服务设计（编译时插桩） |
+| [runtime-service.md](./02-service/runtime-service.md) | 预览服务设计 |
+| [plugin-service.md](./02-service/plugin-service.md) | 插件服务设计 |
+| [service-orchestration.md](./02-service/service-orchestration.md) | 服务编排设计 |
 
 ---
 
@@ -588,15 +590,28 @@ interface PageMetadata {
 
 **目录**: [05-publish/](./05-publish/)
 
+**部署方式**: ⚠️ **独立服务**（assembox-publish-service）
+
 **架构核心**：
 > Assembox 采用 **"代码生成 + 构建发布"** 模式，而非传统低代码平台的"运行时解释"模式。
 > 元数据配置在发布时被编译为标准的 NestJS 后端代码和 Vue 3 前端代码，获得最优性能和可调试性。
+>
+> **发布服务是独立部署的微服务**，通过 RPC 调用低代码服务（assembox-service）获取元数据快照、配置快照和插件配置。
 
 **职责**：
+- 从低代码服务获取元数据/配置快照
 - 将元数据配置编译为标准源代码（NestJS + Vue 3）
 - 代码生成（Entity、DTO、Controller、Service、Vue组件）
 - CI/CD 构建流水线
 - K8s 部署与灰度发布
+
+**与低代码服务的交互**：
+| 调用接口 | 说明 |
+|---------|------|
+| `GET /api/v1/meta/snapshot/:productId` | 获取元数据快照 |
+| `GET /api/v1/config/snapshot/:productId` | 获取配置快照 |
+| `GET /api/v1/plugin/snapshot/:productId` | 获取插件配置快照 |
+| `GET /api/v1/flow/snapshot/:productId` | 获取流程编排快照 |
 
 **核心功能**：
 - **代码生成器**：ts-morph 生成 TypeScript，EJS 生成 Vue SFC
@@ -607,6 +622,7 @@ interface PageMetadata {
 **设计决策**：
 | 决策点 | 选择 | 原因 |
 |-------|------|------|
+| **服务拆分** | 独立发布服务 | 职责分离，低代码服务专注设计时 |
 | 执行模式 | 代码生成（非运行时解释） | 性能最优，可调试，AI友好 |
 | 部署粒度 | 产品级服务 | 同一产品所有模块打包为一个服务 |
 | 代码可编辑性 | 纯生成，禁止修改 | 元数据是唯一真实来源 |
