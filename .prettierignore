@@ -1,0 +1,21 @@
+# 依赖
+node_modules
+pnpm-lock.yaml
+
+# 构建产物
+dist
+lib
+*.tsbuildinfo
+
+# 日志
+*.log
+logs
+
+# 缓存
+.cache
+.eslintcache
+
+# 其他
+coverage
+*.min.js
+*.min.css

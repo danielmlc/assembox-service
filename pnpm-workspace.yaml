@@ -1,4 +1,11 @@
 packages:
-  - 'packages/*'
+  # 前端相关包
+  # - 'packages/*'
+  # 文档包
   - 'docs/*'
-  - 'demo/*'
+  # 后端服务项目（实际开发）
+  - 'projects/*'
+  
+# 注意: lib/ 目录包含云平台基础设施包的源码，仅供代码阅读参考
+# 实际使用时应该安装发布到 npm 的版本，而不是使用 workspace 协议
+# 例如: pnpm add @cs/nest-common@^3.0.1
