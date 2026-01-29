@@ -509,7 +509,6 @@ interface PageMetadata {
 | ConfigModule | 配置 CRUD、版本管理、快照服务 | 设计时 |
 | PreviewModule | 预览引擎（代码生成 + 热重载）| 设计时 |
 | PluginModule | 插件配置管理 | 设计时 |
-| SchemaModule | DDL 生成、表结构管理 | 设计时 |
 | FlowModule | 服务编排（多步骤流程、条件分支、跨模型）| 设计时 |
 
 **文档索引**：
@@ -594,14 +593,14 @@ interface PageMetadata {
 
 **架构核心**：
 > Assembox 采用 **"代码生成 + 构建发布"** 模式，而非传统低代码平台的"运行时解释"模式。
-> 元数据配置在发布时被编译为标准的 NestJS 后端代码和 Vue 3 前端代码，获得最优性能和可调试性。
+> 元数据配置在发布时被编译为标准的 NestJS 后端代码，获得最优性能和可调试性。
 >
 > **发布服务是独立部署的微服务**，通过 RPC 调用低代码服务（assembox-service）获取元数据快照、配置快照和插件配置。
 
 **职责**：
 - 从低代码服务获取元数据/配置快照
-- 将元数据配置编译为标准源代码（NestJS + Vue 3）
-- 代码生成（Entity、DTO、Controller、Service、Vue组件）
+- 将元数据配置编译为标准源代码（NestJS 后端）
+- 代码生成（Entity、DTO、Controller、Service、Module）
 - CI/CD 构建流水线
 - K8s 部署与灰度发布
 
@@ -614,7 +613,7 @@ interface PageMetadata {
 | `GET /api/v1/flow/snapshot/:productId` | 获取流程编排快照 |
 
 **核心功能**：
-- **代码生成器**：ts-morph 生成 TypeScript，EJS 生成 Vue SFC
+- **代码生成器**：ts-morph 生成 TypeScript 代码，EJS 生成配置文件
 - **构建流程**：Jenkins Pipeline，Docker 镜像构建
 - **部署方案**：K8s 编排，Istio 灰度发布
 - **版本管理**：产品级发布，语义化版本
@@ -626,13 +625,13 @@ interface PageMetadata {
 | 执行模式 | 代码生成（非运行时解释） | 性能最优，可调试，AI友好 |
 | 部署粒度 | 产品级服务 | 同一产品所有模块打包为一个服务 |
 | 代码可编辑性 | 纯生成，禁止修改 | 元数据是唯一真实来源 |
-| 前端策略 | 前端也生成代码 | 前后端统一发布流程 |
+| 生成范围 | 仅后端代码 | 前端由独立项目实现 |
 
 **文档索引**：
 | 文档 | 说明 |
 |-----|------|
 | [overview.md](./05-publish/overview.md) | 发布流程总览：架构对比、发布流程、版本管理 |
-| [code-generation.md](./05-publish/code-generation.md) | **代码生成设计（核心）**：生成器架构、后端/前端代码生成 |
+| [code-generation.md](./05-publish/code-generation.md) | **代码生成设计（核心）**：生成器架构、后端代码生成 |
 | [build-process.md](./05-publish/build-process.md) | 构建流程设计：CI/CD 流水线、质量门禁、镜像构建 |
 | [deployment.md](./05-publish/deployment.md) | 部署方案设计：K8s 资源、发布策略、监控告警 |
 

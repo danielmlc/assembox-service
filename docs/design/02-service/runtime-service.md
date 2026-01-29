@@ -36,7 +36,7 @@
     代码生成 + 热重载                       代码生成 + 完整构建
            │                                      │
            ▼                                      ▼
-    快速迭代（1-5秒）                       性能最优（分钟级）
+    快速迭代（3-10秒）                      性能最优（分钟级）
     所见即所得                              可水平扩展
 ```
 
@@ -48,7 +48,7 @@
 |-----|------|
 | **预览环境管理** | 启动、停止、监控预览容器 |
 | **增量代码生成** | 检测配置变更，仅生成变更部分 |
-| **热重载协调** | 触发前端 HMR 和后端热重载 |
+| **热重载协调** | 触发后端热重载 |
 | **预览代理** | 将请求代理到预览容器 |
 
 ### 1.3 核心优势
@@ -100,17 +100,15 @@
 
 | 变更类型 | 预估时间 | 处理方式 |
 |---------|---------|---------|
-| 页面配置修改 | 1-2秒 | 前端 HMR，仅更新 Vue 组件 |
-| 组件属性调整 | 1-2秒 | 前端 HMR |
 | 模型字段修改 | 3-5秒 | 后端热重载，更新 Entity/DTO/Service |
 | 新增模型 | 5-10秒 | 需编译新模块并注册 |
 | 插件配置变更 | 3-5秒 | 重新生成 Service 代码 |
+| Service 逻辑修改 | 3-5秒 | 后端热重载 |
 
 ### 2.3 技术选型
 
 | 组件 | 技术 | 说明 |
 |-----|------|------|
-| 前端热重载 | Vite HMR | 毫秒级 Vue 组件更新 |
 | 后端热重载 | NestJS Hot Reload | 模块级热重载 |
 | 快速编译 | esbuild | TypeScript 增量编译 |
 | 预览容器 | Docker / 本地进程 | 隔离的预览环境 |
@@ -160,7 +158,6 @@ interface PreviewContainer {
 
   // 容器信息
   backendPort: number;
-  frontendPort: number;
 
   // 时间信息
   createdAt: Date;
@@ -244,10 +241,6 @@ export class ChangeDetectorService {
           `dto/${modelCode}-create.dto.ts`,
           `dto/${modelCode}-update.dto.ts`,
         ];
-      case 'page':
-        return [`pages/${change.target}.vue`];
-      case 'component':
-        return [`components/${change.target}.vue`];
       case 'plugin':
         // 插件变更影响所有绑定的 Service
         return this.getPluginAffectedServices(change.target);
@@ -296,32 +289,7 @@ export class ChangeDetectorService {
 
 ## 5. 热重载机制
 
-### 5.1 前端热重载（Vite HMR）
-
-```typescript
-@Injectable()
-export class FrontendHotReloadService {
-  /**
-   * 触发前端热重载
-   */
-  async triggerHMR(containerId: string, changedFiles: string[]): Promise<void> {
-    const container = await this.containerService.get(containerId);
-
-    // 通知 Vite dev server
-    const ws = new WebSocket(`ws://localhost:${container.frontendPort}/__vite_hmr`);
-
-    ws.on('open', () => {
-      ws.send(JSON.stringify({
-        type: 'custom',
-        event: 'assembox:config-change',
-        data: { changedFiles },
-      }));
-    });
-  }
-}
-```
-
-### 5.2 后端热重载
+### 5.1 后端热重载
 
 ```typescript
 @Injectable()
@@ -362,7 +330,7 @@ export class BackendHotReloadService {
 }
 ```
 
-### 5.3 热重载时序图
+### 5.2 热重载时序图
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -390,7 +358,7 @@ export class BackendHotReloadService {
   │ ◀───────────────│                   │                 │
   │                  │                   │                 │
 
-总延迟: 1-5 秒（取决于变更类型）
+总延迟: 3-10 秒（取决于变更类型）
 ```
 
 ---
@@ -405,7 +373,6 @@ export class BackendHotReloadService {
 | PreviewContainerService | 管理预览容器 |
 | ChangeDetectorService | 检测配置变更 |
 | IncrementalGeneratorService | 增量代码生成 |
-| FrontendHotReloadService | 前端热重载 |
 | BackendHotReloadService | 后端热重载 |
 | PreviewProxyService | 请求代理 |
 
@@ -418,7 +385,6 @@ export class PreviewOrchestratorService {
     private readonly containerService: PreviewContainerService,
     private readonly changeDetector: ChangeDetectorService,
     private readonly generator: IncrementalGeneratorService,
-    private readonly frontendReload: FrontendHotReloadService,
     private readonly backendReload: BackendHotReloadService,
   ) {}
 
@@ -445,7 +411,6 @@ export class PreviewOrchestratorService {
     return {
       sessionId: container.id,
       backendUrl: `http://localhost:${container.backendPort}`,
-      frontendUrl: `http://localhost:${container.frontendPort}`,
       status: 'ready',
     };
   }
@@ -478,13 +443,11 @@ export class PreviewOrchestratorService {
     await this.containerService.updateFiles(container.id, generatedCode);
 
     // 4. 触发热重载
-    const frontendFiles = affectedFiles.filter(f => f.endsWith('.vue'));
     const backendFiles = affectedFiles.filter(f => f.endsWith('.ts'));
 
-    await Promise.all([
-      frontendFiles.length > 0 && this.frontendReload.triggerHMR(container.id, frontendFiles),
-      backendFiles.length > 0 && this.backendReload.triggerReload(container.id, backendFiles),
-    ]);
+    if (backendFiles.length > 0) {
+      await this.backendReload.triggerReload(container.id, backendFiles);
+    }
 
     // 5. 更新版本
     await this.containerService.updateVersion(container.id, 'latest');
@@ -507,7 +470,6 @@ export class PreviewOrchestratorService {
 interface PreviewSession {
   sessionId: string;
   backendUrl: string;
-  frontendUrl: string;
   status: 'ready' | 'starting' | 'error';
 }
 
@@ -533,7 +495,6 @@ export class PreviewProxyService {
    */
   async proxy(
     sessionId: string,
-    target: 'backend' | 'frontend',
     request: Request,
   ): Promise<Response> {
     const container = await this.containerService.get(sessionId);
@@ -542,8 +503,7 @@ export class PreviewProxyService {
       throw new ServiceUnavailableException('预览环境未就绪');
     }
 
-    const port = target === 'backend' ? container.backendPort : container.frontendPort;
-    const targetUrl = `http://localhost:${port}${request.url}`;
+    const targetUrl = `http://localhost:${container.backendPort}${request.url}`;
 
     // 代理请求
     return this.httpService.axiosRef({
@@ -568,8 +528,7 @@ export class PreviewProxyService {
 | POST | /api/v1/preview/refresh | 刷新预览（触发增量生成）|
 | GET | /api/v1/preview/status | 获取预览环境状态 |
 | DELETE | /api/v1/preview/stop | 停止预览环境 |
-| ALL | /api/v1/preview/proxy/backend/* | 代理到预览后端 |
-| ALL | /api/v1/preview/proxy/frontend/* | 代理到预览前端 |
+| ALL | /api/v1/preview/proxy/* | 代理到预览后端 |
 
 ### 7.2 请求/响应示例
 
@@ -592,7 +551,6 @@ Content-Type: application/json
   "result": {
     "sessionId": "preview-abc123",
     "backendUrl": "http://localhost:3001",
-    "frontendUrl": "http://localhost:5173",
     "status": "ready"
   }
 }
