@@ -10,11 +10,10 @@
 1. [概述](#1-概述)
 2. [生成器架构](#2-生成器架构)
 3. [后端代码生成](#3-后端代码生成)
-4. [前端代码生成](#4-前端代码生成)
-5. [配置文件生成](#5-配置文件生成)
-6. [生成规则与约定](#6-生成规则与约定)
-7. [自定义代码块设计](#7-自定义代码块设计)
-8. [设计决策记录](#8-设计决策记录)
+4. [配置文件生成](#4-配置文件生成)
+5. [生成规则与约定](#5-生成规则与约定)
+6. [自定义代码块设计](#6-自定义代码块设计)
+7. [设计决策记录](#7-设计决策记录)
 
 ---
 
@@ -22,7 +21,7 @@
 
 ### 1.1 设计目标
 
-代码生成器是 Assembox 发布流程的核心组件，负责将元数据配置转换为标准的 NestJS 后端代码和 Vue 3 前端代码。
+代码生成器是 Assembox 发布流程的核心组件，负责将元数据配置转换为标准的 NestJS 后端代码。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -32,11 +31,11 @@
            元数据配置 (JSON)                    标准源代码
         ┌─────────────────┐               ┌─────────────────┐
         │  ModuleConfig   │               │  *.entity.ts    │
-        │  PageConfig     │               │  *.controller.ts│
-        │  ModelConfig    │    编译器      │  *.service.ts   │
-        │  ApiConfig      │ ═══════════▶  │  *.vue          │
-        │  LogicConfig    │               │  router.ts      │
-        │  ...            │               │  api.ts         │
+        │  ModelConfig    │               │  *.controller.ts│
+        │  ApiConfig      │    编译器      │  *.service.ts   │
+        │  LogicConfig    │ ═══════════▶  │  *.dto.ts       │
+        │  PluginConfig   │               │  *.module.ts    │
+        │  ...            │               │  ...            │
         └─────────────────┘               └─────────────────┘
                 │                                  │
                 │                                  │
@@ -50,7 +49,7 @@
 |-----|------|
 | **可读性优先** | 生成的代码应该像人写的一样清晰，便于理解和调试 |
 | **类型安全** | 充分利用 TypeScript 类型系统，编译时发现错误 |
-| **框架标准** | 遵循 NestJS / Vue 3 官方最佳实践，不发明新模式 |
+| **框架标准** | 遵循 NestJS 官方最佳实践，不发明新模式 |
 | **幂等生成** | 相同输入总是产生相同输出，便于对比和版本控制 |
 | **最小代码** | 只生成必要代码，避免冗余和过度抽象 |
 
@@ -59,7 +58,7 @@
 | 技术 | 用途 | 说明 |
 |-----|------|------|
 | **ts-morph** | AST 代码生成 | TypeScript 代码生成和操作的首选库 |
-| **EJS** | 模板引擎 | 用于复杂模板场景（如 Vue SFC） |
+| **EJS** | 模板引擎 | 用于配置文件等模板场景 |
 | **Prettier** | 代码格式化 | 统一代码风格 |
 
 ```
@@ -71,9 +70,9 @@
 │                                                                             │
 │   ts-morph (AST)                  EJS (模板)                                │
 │   ┌─────────────┐                 ┌─────────────┐                          │
-│   │ - Entity    │                 │ - Vue SFC   │                          │
-│   │ - DTO       │                 │ - HTML      │                          │
-│   │ - Service   │                 │ - 配置文件   │                          │
+│   │ - Entity    │                 │ - 配置文件   │                          │
+│   │ - DTO       │                 │ - Dockerfile│                          │
+│   │ - Service   │                 │ - YAML      │                          │
 │   │ - Controller│                 │             │                          │
 │   │ - Module    │                 │             │                          │
 │   └──────┬──────┘                 └──────┬──────┘                          │
@@ -108,22 +107,22 @@
 │  │                          生成编排器                                     │ │
 │  └────────────────────────────────┬──────────────────────────────────────┘ │
 │                                   │                                         │
-│         ┌─────────────────────────┼─────────────────────────┐              │
-│         │                         │                         │              │
-│         ▼                         ▼                         ▼              │
-│  ┌─────────────┐          ┌─────────────┐          ┌─────────────┐        │
-│  │ Backend     │          │ Frontend    │          │ Config      │        │
-│  │ Generator   │          │ Generator   │          │ Generator   │        │
-│  │ 后端生成器   │          │ 前端生成器   │          │ 配置生成器   │        │
-│  └──────┬──────┘          └──────┬──────┘          └──────┬──────┘        │
-│         │                        │                        │                │
-│    ┌────┴────┐              ┌────┴────┐              ┌────┴────┐          │
-│    │         │              │         │              │         │          │
-│    ▼         ▼              ▼         ▼              ▼         ▼          │
-│ ┌──────┐ ┌──────┐      ┌──────┐ ┌──────┐      ┌──────┐ ┌──────┐         │
-│ │Entity│ │API   │      │Page  │ │Router│      │Package│ │Docker│         │
-│ │Gen   │ │Gen   │      │Gen   │ │Gen   │      │Gen   │ │Gen   │         │
-│ └──────┘ └──────┘      └──────┘ └──────┘      └──────┘ └──────┘         │
+│                  ┌────────────────┴────────────────┐                       │
+│                  │                                 │                       │
+│                  ▼                                 ▼                       │
+│          ┌─────────────┐                   ┌─────────────┐                │
+│          │ Backend     │                   │ Config      │                │
+│          │ Generator   │                   │ Generator   │                │
+│          │ 后端生成器   │                   │ 配置生成器   │                │
+│          └──────┬──────┘                   └──────┬──────┘                │
+│                 │                                 │                        │
+│    ┌────────────┼────────────┐        ┌──────────┼──────────┐            │
+│    │            │            │        │          │          │            │
+│    ▼            ▼            ▼        ▼          ▼          ▼            │
+│ ┌──────┐  ┌──────┐  ┌──────┐   ┌──────┐  ┌──────┐  ┌──────┐            │
+│ │Entity│  │Service│  │Control│   │Package│  │Docker│  │K8s   │            │
+│ │Gen   │  │Gen   │  │Gen    │   │Gen   │  │Gen   │  │Gen   │            │
+│ └──────┘  └──────┘  └──────┘   └──────┘  └──────┘  └──────┘            │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
                                    │
@@ -1113,429 +1112,9 @@ export class OrderModule {}
 
 ---
 
-## 4. 前端代码生成
+## 4. 配置文件生成
 
-### 4.1 生成文件结构
-
-```
-frontend/
-├── src/
-│   ├── main.ts                    # 入口文件
-│   ├── App.vue                    # 根组件
-│   ├── router/
-│   │   └── index.ts               # 路由配置
-│   │
-│   ├── api/                       # API 客户端
-│   │   ├── request.ts             # Axios 封装
-│   │   ├── order.ts               # 订单 API
-│   │   └── product.ts             # 商品 API
-│   │
-│   ├── views/                     # 页面组件
-│   │   ├── order/
-│   │   │   ├── OrderList.vue      # 订单列表
-│   │   │   └── OrderDetail.vue    # 订单详情
-│   │   └── product/
-│   │       └── ...
-│   │
-│   ├── components/                # 公共组件
-│   │   ├── layout/
-│   │   └── common/
-│   │
-│   └── stores/                    # 状态管理
-│       └── index.ts
-│
-├── package.json
-├── vite.config.ts
-└── tsconfig.json
-```
-
-### 4.2 页面组件生成
-
-#### 4.2.1 列表页面生成
-
-**输入配置：**
-
-```json
-{
-  "pageCode": "order-list",
-  "pageName": "订单列表",
-  "pageType": "list",
-  "moduleCode": "order",
-  "modelCode": "order",
-  "components": [
-    {
-      "type": "search-form",
-      "fields": ["orderNo", "status", "createdAt"]
-    },
-    {
-      "type": "table",
-      "columns": ["orderNo", "totalAmount", "status", "createdAt"],
-      "actions": ["view", "edit", "delete"]
-    },
-    {
-      "type": "pagination"
-    }
-  ]
-}
-```
-
-**生成代码（Vue SFC）：**
-
-```vue
-<!-- src/views/order/OrderList.vue -->
-
-<template>
-  <div class="order-list">
-    <!-- 搜索表单 -->
-    <el-card class="search-card">
-      <el-form :model="searchForm" inline>
-        <el-form-item label="订单号">
-          <el-input
-            v-model="searchForm.orderNo"
-            placeholder="请输入订单号"
-            clearable
-          />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select
-            v-model="searchForm.status"
-            placeholder="请选择"
-            clearable
-          >
-            <el-option label="待支付" :value="0" />
-            <el-option label="已支付" :value="1" />
-            <el-option label="已取消" :value="2" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="创建时间">
-          <el-date-picker
-            v-model="searchForm.createdAt"
-            type="daterange"
-            range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <!-- 数据表格 -->
-    <el-card class="table-card">
-      <el-table :data="tableData" v-loading="loading" border>
-        <el-table-column prop="orderNo" label="订单号" width="180" />
-        <el-table-column prop="totalAmount" label="订单金额" width="120">
-          <template #default="{ row }">
-            ¥{{ row.totalAmount.toFixed(2) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="getStatusType(row.status)">
-              {{ getStatusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="180" />
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="handleView(row)">
-              查看
-            </el-button>
-            <el-button link type="primary" @click="handleEdit(row)">
-              编辑
-            </el-button>
-            <el-button link type="danger" @click="handleDelete(row)">
-              删除
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <!-- 分页 -->
-      <el-pagination
-        v-model:current-page="pagination.page"
-        v-model:page-size="pagination.pageSize"
-        :total="pagination.total"
-        :page-sizes="[10, 20, 50, 100]"
-        layout="total, sizes, prev, pager, next, jumper"
-        @size-change="handleSizeChange"
-        @current-change="handlePageChange"
-      />
-    </el-card>
-  </div>
-</template>
-
-<script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import { orderApi } from '@/api/order';
-
-// 搜索表单
-const searchForm = reactive({
-  orderNo: '',
-  status: undefined as number | undefined,
-  createdAt: [] as Date[],
-});
-
-// 表格数据
-const tableData = ref([]);
-const loading = ref(false);
-
-// 分页
-const pagination = reactive({
-  page: 1,
-  pageSize: 10,
-  total: 0,
-});
-
-// 获取数据
-const fetchData = async () => {
-  loading.value = true;
-  try {
-    const res = await orderApi.list({
-      ...searchForm,
-      page: pagination.page,
-      pageSize: pagination.pageSize,
-    });
-    tableData.value = res.data;
-    pagination.total = res.total;
-  } finally {
-    loading.value = false;
-  }
-};
-
-// 搜索
-const handleSearch = () => {
-  pagination.page = 1;
-  fetchData();
-};
-
-// 重置
-const handleReset = () => {
-  Object.assign(searchForm, {
-    orderNo: '',
-    status: undefined,
-    createdAt: [],
-  });
-  handleSearch();
-};
-
-// 分页
-const handleSizeChange = (size: number) => {
-  pagination.pageSize = size;
-  fetchData();
-};
-
-const handlePageChange = (page: number) => {
-  pagination.page = page;
-  fetchData();
-};
-
-// 查看
-const router = useRouter();
-const handleView = (row: any) => {
-  router.push(`/order/detail/${row.id}`);
-};
-
-// 编辑
-const handleEdit = (row: any) => {
-  router.push(`/order/edit/${row.id}`);
-};
-
-// 删除
-const handleDelete = async (row: any) => {
-  await ElMessageBox.confirm('确定删除该订单？', '提示', {
-    type: 'warning',
-  });
-  await orderApi.delete(row.id);
-  ElMessage.success('删除成功');
-  fetchData();
-};
-
-// 状态辅助方法
-const getStatusText = (status: number) => {
-  const map: Record<number, string> = {
-    0: '待支付',
-    1: '已支付',
-    2: '已取消',
-  };
-  return map[status] || '未知';
-};
-
-const getStatusType = (status: number) => {
-  const map: Record<number, string> = {
-    0: 'warning',
-    1: 'success',
-    2: 'info',
-  };
-  return map[status] || '';
-};
-
-onMounted(() => {
-  fetchData();
-});
-</script>
-
-<style scoped>
-.order-list {
-  padding: 20px;
-}
-
-.search-card {
-  margin-bottom: 20px;
-}
-
-.table-card .el-pagination {
-  margin-top: 20px;
-  justify-content: flex-end;
-}
-</style>
-```
-
-### 4.3 API 客户端生成
-
-```typescript
-// src/api/order.ts
-
-import request from './request';
-
-export interface Order {
-  id: string;
-  orderNo: string;
-  totalAmount: number;
-  status: number;
-  createdAt: string;
-}
-
-export interface CreateOrderDto {
-  orderNo: string;
-  totalAmount: number;
-  status?: number;
-}
-
-export interface UpdateOrderDto {
-  orderNo?: string;
-  totalAmount?: number;
-  status?: number;
-}
-
-export interface QueryOrderDto {
-  page?: number;
-  pageSize?: number;
-  orderNo?: string;
-  status?: number;
-}
-
-export interface PageResult<T> {
-  data: T[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
-export const orderApi = {
-  // 创建订单
-  create(data: CreateOrderDto): Promise<Order> {
-    return request.post('/order/order', data);
-  },
-
-  // 获取订单列表
-  list(params: QueryOrderDto): Promise<PageResult<Order>> {
-    return request.get('/order/order', { params });
-  },
-
-  // 获取订单详情
-  detail(id: string): Promise<Order> {
-    return request.get(`/order/order/${id}`);
-  },
-
-  // 更新订单
-  update(id: string, data: UpdateOrderDto): Promise<Order> {
-    return request.put(`/order/order/${id}`, data);
-  },
-
-  // 删除订单
-  delete(id: string): Promise<void> {
-    return request.delete(`/order/order/${id}`);
-  },
-};
-```
-
-### 4.4 路由生成
-
-```typescript
-// src/router/index.ts
-
-import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
-
-const routes: RouteRecordRaw[] = [
-  {
-    path: '/',
-    component: () => import('@/components/layout/MainLayout.vue'),
-    children: [
-      // 订单模块
-      {
-        path: 'order',
-        name: 'order',
-        meta: { title: '订单管理' },
-        children: [
-          {
-            path: 'list',
-            name: 'order-list',
-            component: () => import('@/views/order/OrderList.vue'),
-            meta: { title: '订单列表' },
-          },
-          {
-            path: 'detail/:id',
-            name: 'order-detail',
-            component: () => import('@/views/order/OrderDetail.vue'),
-            meta: { title: '订单详情' },
-          },
-          {
-            path: 'create',
-            name: 'order-create',
-            component: () => import('@/views/order/OrderForm.vue'),
-            meta: { title: '新建订单' },
-          },
-          {
-            path: 'edit/:id',
-            name: 'order-edit',
-            component: () => import('@/views/order/OrderForm.vue'),
-            meta: { title: '编辑订单' },
-          },
-        ],
-      },
-      // 商品模块
-      {
-        path: 'product',
-        name: 'product',
-        meta: { title: '商品管理' },
-        children: [
-          // ...
-        ],
-      },
-    ],
-  },
-];
-
-const router = createRouter({
-  history: createWebHistory(),
-  routes,
-});
-
-export default router;
-```
-
----
-
-## 5. 配置文件生成
-
-### 5.1 package.json 生成
+### 4.1 package.json 生成
 
 ```json
 {
@@ -1543,31 +1122,9 @@ export default router;
   "version": "1.0.0",
   "description": "Generated by Assembox CodeGenerator",
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "cd backend && npm run start:dev",
-    "dev:frontend": "cd frontend && npm run dev",
-    "build": "npm run build:backend && npm run build:frontend",
-    "build:backend": "cd backend && npm run build",
-    "build:frontend": "cd frontend && npm run build",
-    "test": "npm run test:backend && npm run test:frontend",
-    "test:backend": "cd backend && npm run test",
-    "test:frontend": "cd frontend && npm run test"
-  },
-  "private": true,
-  "workspaces": ["backend", "frontend"]
-}
-```
-
-### 5.2 后端 package.json
-
-```json
-{
-  "name": "backend",
-  "version": "1.0.0",
-  "scripts": {
+    "dev": "nest start --watch",
     "build": "nest build",
     "start": "nest start",
-    "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "test": "jest",
     "test:cov": "jest --coverage"
@@ -1599,10 +1156,10 @@ export default router;
 }
 ```
 
-### 5.3 Dockerfile 生成
+### 4.2 Dockerfile 生成
 
 ```dockerfile
-# 后端 Dockerfile
+# Dockerfile
 FROM node:18-alpine AS builder
 
 WORKDIR /app
@@ -1632,15 +1189,15 @@ EXPOSE 3000
 CMD ["node", "dist/main.js"]
 ```
 
-### 5.4 docker-compose.yml 生成
+### 4.3 docker-compose.yml 生成
 
 ```yaml
 version: '3.8'
 
 services:
-  backend:
+  app:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
@@ -1653,16 +1210,6 @@ services:
       - DB_DATABASE=${DB_DATABASE}
     depends_on:
       - mysql
-    restart: unless-stopped
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
     restart: unless-stopped
 
   mysql:
@@ -1680,9 +1227,9 @@ volumes:
 
 ---
 
-## 6. 生成规则与约定
+## 5. 生成规则与约定
 
-### 6.1 命名约定
+### 5.1 命名约定
 
 | 类型 | 规则 | 示例 |
 |-----|------|------|
@@ -1691,12 +1238,10 @@ volumes:
 | **Service 类名** | PascalCase + Service 后缀 | `OrderService` |
 | **Controller 类名** | PascalCase + Controller 后缀 | `OrderController` |
 | **Module 类名** | PascalCase + Module 后缀 | `OrderModule` |
-| **Vue 组件名** | PascalCase | `OrderList.vue` |
-| **API 函数名** | camelCase | `orderApi.list()` |
 | **数据库字段** | snake_case | `order_no` |
 | **TypeScript 属性** | camelCase | `orderNo` |
 
-### 6.2 类型映射
+### 5.2 类型映射
 
 | 元数据类型 | TypeScript 类型 | 数据库类型 | 验证器 |
 |-----------|----------------|-----------|--------|
@@ -1710,7 +1255,7 @@ volumes:
 | datetime | Date | DATETIME | IsDateString |
 | json | Record<string, any> | JSON | IsObject |
 
-### 6.3 代码组织规则
+### 5.3 代码组织规则
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1746,11 +1291,11 @@ volumes:
 
 ---
 
-## 7. 自定义代码块设计
+## 6. 自定义代码块设计
 
 > **设计理念**: 虽然 Assembox 的核心原则是"元数据是唯一真实来源"，但企业级场景中总有 1% 的需求是低代码配置无法满足的。自定义代码块提供可控的"逃生舱"，允许开发者在特定位置注入手写代码，且在重新生成时不会被覆盖。
 
-### 7.1 设计目标
+### 6.1 设计目标
 
 | 目标 | 说明 |
 |-----|------|
@@ -1759,7 +1304,7 @@ volumes:
 | **版本追踪** | 自定义代码纳入元数据版本管理，可回溯 |
 | **重生成安全** | 重新生成代码时保留自定义代码块，不覆盖 |
 
-### 7.2 架构设计
+### 6.2 架构设计
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1780,7 +1325,7 @@ volumes:
                                                 └──────────────────────┘
 ```
 
-### 7.3 元数据配置扩展
+### 6.3 元数据配置扩展
 
 ```typescript
 /**
@@ -1899,9 +1444,9 @@ interface CustomImport {
 }
 ```
 
-### 7.4 代码生成器处理
+### 6.4 代码生成器处理
 
-#### 7.4.1 生成流程
+#### 6.4.1 生成流程
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1940,7 +1485,7 @@ interface CustomImport {
                     └─────────────────────┘
 ```
 
-#### 7.4.2 Service 生成器扩展
+#### 6.4.2 Service 生成器扩展
 
 ```typescript
 class ServiceGenerator {
@@ -2065,9 +1610,9 @@ class ServiceGenerator {
 }
 ```
 
-### 7.5 生成示例
+### 6.5 生成示例
 
-#### 7.5.1 元数据配置示例
+#### 6.5.1 元数据配置示例
 
 ```json
 {
@@ -2110,7 +1655,7 @@ class ServiceGenerator {
 }
 ```
 
-#### 7.5.2 生成的代码
+#### 6.5.2 生成的代码
 
 ```typescript
 // src/modules/order/order.service.ts
@@ -2196,7 +1741,7 @@ export class OrderService {
 }
 ```
 
-### 7.6 约束与限制
+### 6.6 约束与限制
 
 | 约束 | 说明 |
 |-----|------|
@@ -2206,7 +1751,7 @@ export class OrderService {
 | **命名冲突** | 自定义方法名不能与标准 CRUD 方法名冲突 |
 | **访问范围** | 自定义代码只能访问 Service 类的成员和注入的依赖 |
 
-### 7.7 版本管理
+### 6.7 版本管理
 
 自定义代码块作为元数据的一部分，享受完整的版本管理：
 
@@ -2230,16 +1775,14 @@ export class OrderService {
 
 ---
 
-## 8. 设计决策记录
+## 7. 设计决策记录
 
 | 问题 | 决策 | 说明 |
 |-----|------|------|
-| 代码生成技术 | ts-morph + EJS | ts-morph 用于 TS 代码，EJS 用于 Vue SFC |
+| 代码生成技术 | ts-morph + EJS | ts-morph 用于 TS 代码，EJS 用于配置文件 |
 | bigint 类型映射 | 映射为 string | 避免 JavaScript 精度丢失问题 |
 | DTO 生成策略 | 独立 Create/Update/Query | 职责清晰，便于校验 |
 | 验证器选择 | class-validator | NestJS 官方推荐，与框架深度集成 |
-| 前端状态管理 | 组件内 Composition API | 简化生成逻辑，避免过度抽象 |
-| API 客户端结构 | 按模块拆分 | 便于按需引入，减少包体积 |
 | **自定义代码块** | **钩子 + 自定义方法** | **提供可控的扩展能力，不破坏代码生成的一致性** |
 
 ---

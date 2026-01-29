@@ -12,6 +12,7 @@
 版本管理是 Assembox 存储层的核心能力，包含：
 
 - **模块版本生命周期** - 版本的创建、发布、废弃流程
+- **草稿历史管理** - 设计过程中的版本历史与回退能力
 - **配置版本历史** - 每次发布的配置快照与回滚能力
 - **Git 版本控制** - 使用 Gitea 进行版本备份与审计（仅同步 published 状态的配置）
 
@@ -21,12 +22,21 @@
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │   ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐        │
-│   │  模块版本管理    │    │  配置版本历史    │    │   Git版本控制   │        │
+│   │  模块版本管理    │    │  草稿历史管理    │    │  配置版本历史    │        │
 │   │                 │    │                 │    │                 │        │
-│   │  - 生命周期     │    │  - 发布历史     │    │  - 分支管理     │        │
-│   │  - 创建/复制    │    │  - 版本回滚     │    │  - 异步同步     │        │
-│   │  - 多版本并存   │    │  - 差异对比     │    │  - 灾难恢复     │        │
-│   └─────────────────┘    └─────────────────┘    └─────────────────┘        │
+│   │  - 生命周期     │    │  - 保存归档     │    │  - 发布历史     │        │
+│   │  - 创建/复制    │    │  - 草稿回退     │    │  - 版本回滚     │        │
+│   │  - 多版本并存   │    │  - 版本对比     │    │  - 差异对比     │        │
+│   └─────────────────┘    │  - 历史清理     │    └─────────────────┘        │
+│                          └─────────────────┘                               │
+│                                                                             │
+│   ┌─────────────────┐                                                       │
+│   │   Git版本控制   │                                                       │
+│   │                 │                                                       │
+│   │  - 分支管理     │                                                       │
+│   │  - 异步同步     │                                                       │
+│   │  - 灾难恢复     │                                                       │
+│   └─────────────────┘                                                       │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -36,9 +46,22 @@
 | 概念 | 说明 |
 |-----|------|
 | 模块版本 (Module Version) | 模块的大版本，如 V1、V2，对应 Git 分支 |
-| 配置版本 (Config Version) | 单个配置的发布版本号，每次发布 +1 |
+| 草稿版本 (Draft Version) | 单个配置的草稿版本号，每次保存 +1，用于设计过程回退 |
+| 配置版本 (Config Version) | 单个配置的发布版本号，每次发布 +1，用于生产环境回滚 |
 | Git 分支 | 模块版本对应 Git 分支，格式 `{module}/{version}` |
 | Git 标签 | 配置版本对应 Git 标签，用于精确定位历史 |
+
+**版本层次关系：**
+
+```
+模块版本 (V1, V2, V3...)
+    │
+    └── 组件配置
+            │
+            ├── 草稿版本 (v1, v2, v3...) ← 每次保存递增，设计过程使用
+            │
+            └── 发布版本 (v1, v2, v3...) ← 每次发布递增，生产环境使用
+```
 
 ---
 
@@ -238,9 +261,432 @@ async function switchVersion(input: VersionSwitch): Promise<void> {
 
 ---
 
-## 3. 配置版本历史
+## 3. 草稿历史管理
 
-### 3.1 发布版本记录
+> **设计目标**：支持设计过程中的版本回退，让用户在编辑配置时可以随时回到之前的草稿版本。
+
+### 3.1 草稿历史定位
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            配置编辑生命周期                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌─────────┐     保存      ┌─────────┐     发布      ┌─────────────┐       │
+│   │  编辑中  │ ───────────▶ │  草稿    │ ───────────▶ │   已发布    │       │
+│   └─────────┘              └─────────┘              └─────────────┘       │
+│        │                        │                         │                │
+│        │                        │                         │                │
+│        │                   ┌────┴────┐              ┌─────┴─────┐          │
+│        │                   │ 草稿历史 │              │  发布历史  │          │
+│        │                   │ v1→v2→v3│              │  v1→v2    │          │
+│        │                   └─────────┘              └───────────┘          │
+│        │                        │                         │                │
+│        │                   设计过程回退              生产环境回滚            │
+│        │                                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+| 对比项 | 草稿历史 | 发布历史 |
+|-------|---------|---------|
+| 记录表 | ab_config_draft_history | ab_config_history |
+| 版本字段 | draft_version | publish_version |
+| 触发时机 | 每次保存草稿 | 每次发布配置 |
+| 存储路径 | OSS draft-history/ | OSS published/ + Gitea |
+| 保留策略 | 按数量/时间清理 | 长期保留 |
+| 使用场景 | 设计器回退、对比 | 生产回滚、审计 |
+
+### 3.2 保存草稿流程
+
+```typescript
+interface SaveDraftInput {
+    configId: number;
+    content: object;
+    saverId: number;
+    changeSummary?: string;  // 可选的变更摘要
+    saveSource?: 'manual' | 'auto_save' | 'import';
+}
+
+async function saveDraft(input: SaveDraftInput): Promise<void> {
+    const config = await getConfig(input.configId);
+    const contentStr = JSON.stringify(input.content, null, 2);
+
+    // 1. 归档当前草稿到历史（如果存在）
+    if (config.draft_oss_key && config.draft_version > 0) {
+        const historyOssKey = generateDraftHistoryOssKey(config, config.draft_version);
+
+        // 复制当前草稿到历史目录
+        await oss.copy(config.draft_oss_key, historyOssKey);
+
+        // 记录到草稿历史表
+        await db.insert('ab_config_draft_history', {
+            config_id: input.configId,
+            component_id: config.component_id,
+            draft_version: config.draft_version,
+            draft_oss_key: historyOssKey,
+            content_hash: config.draft_content_hash,
+            content_size: config.draft_size,
+            change_summary: input.changeSummary,
+            saved_at: config.draft_updated_at,
+            saver_id: config.modifier_id,
+            saver_name: config.modifier_name,
+            save_source: input.saveSource || 'manual'
+        });
+    }
+
+    // 2. 保存新草稿到当前位置
+    const draftOssKey = config.draft_oss_key || generateOssKey(config, 'draft');
+    await oss.put(draftOssKey, contentStr);
+
+    // 3. 更新配置记录
+    const newDraftVersion = config.draft_version + 1;
+    await db.update('ab_config', {
+        id: input.configId,
+        draft_oss_key: draftOssKey,
+        draft_content_hash: md5(contentStr),
+        draft_size: contentStr.length,
+        draft_updated_at: new Date(),
+        draft_version: newDraftVersion,
+        modifier_id: input.saverId,
+    });
+
+    // 4. 异步清理过期历史
+    await queueHistoryCleanup(input.configId);
+}
+
+function generateDraftHistoryOssKey(config: ConfigInfo, version: number): string {
+    const scopeSuffix = config.scope === 'system'
+        ? '_system'
+        : config.scope === 'global'
+            ? '_global'
+            : `_tenant_${config.tenant}`;
+
+    return `assembox/draft-history/${config.moduleCode}/${config.versionCode}/${config.componentType}/${config.componentCode}/${scopeSuffix}_v${version}.json`;
+}
+```
+
+### 3.3 查询草稿历史
+
+```typescript
+interface DraftHistoryItem {
+    id: number;
+    draftVersion: number;
+    savedAt: Date;
+    saverName: string;
+    contentSize: number;
+    contentHash: string;
+    changeSummary?: string;
+    saveSource: string;
+}
+
+/**
+ * 查询配置的草稿历史列表
+ */
+async function getDraftHistoryList(
+    configId: number,
+    options: { limit?: number; offset?: number } = {}
+): Promise<{ items: DraftHistoryItem[]; total: number }> {
+    const { limit = 50, offset = 0 } = options;
+
+    const [items, total] = await Promise.all([
+        db.query(`
+            SELECT id, draft_version, saved_at, saver_name, content_size,
+                   content_hash, change_summary, save_source
+            FROM ab_config_draft_history
+            WHERE config_id = ? AND is_removed = 0
+            ORDER BY draft_version DESC
+            LIMIT ? OFFSET ?
+        `, [configId, limit, offset]),
+
+        db.count(`
+            SELECT COUNT(*) FROM ab_config_draft_history
+            WHERE config_id = ? AND is_removed = 0
+        `, [configId])
+    ]);
+
+    return { items, total };
+}
+
+/**
+ * 获取指定版本的草稿内容
+ */
+async function getDraftHistoryContent(configId: number, draftVersion: number): Promise<object> {
+    const history = await db.query(`
+        SELECT draft_oss_key FROM ab_config_draft_history
+        WHERE config_id = ? AND draft_version = ? AND is_removed = 0
+    `, [configId, draftVersion]);
+
+    if (!history) {
+        throw new Error(`草稿版本 v${draftVersion} 不存在`);
+    }
+
+    const content = await oss.get(history.draft_oss_key);
+    return JSON.parse(content);
+}
+```
+
+### 3.4 草稿版本回退
+
+```typescript
+interface RollbackToDraftInput {
+    configId: number;
+    targetVersion: number;
+    operatorId: number;
+}
+
+/**
+ * 回退到指定的草稿版本
+ * 注意：回退会创建一个新的草稿版本，而不是删除后续版本
+ */
+async function rollbackToDraftVersion(input: RollbackToDraftInput): Promise<void> {
+    // 1. 获取目标版本历史
+    const history = await db.query(`
+        SELECT * FROM ab_config_draft_history
+        WHERE config_id = ? AND draft_version = ? AND is_removed = 0
+    `, [input.configId, input.targetVersion]);
+
+    if (!history) {
+        throw new Error(`草稿版本 v${input.targetVersion} 不存在`);
+    }
+
+    // 2. 获取历史内容
+    const content = await oss.get(history.draft_oss_key);
+
+    // 3. 保存为新草稿（会自动归档当前版本）
+    await saveDraft({
+        configId: input.configId,
+        content: JSON.parse(content),
+        saverId: input.operatorId,
+        changeSummary: `回退到 v${input.targetVersion}`,
+        saveSource: 'manual'
+    });
+}
+```
+
+### 3.5 草稿版本对比
+
+```typescript
+interface DraftVersionDiff {
+    fromVersion: number;
+    toVersion: number;
+    changes: {
+        path: string;           // JSON 路径，如 "columns[0].width"
+        type: 'added' | 'removed' | 'modified';
+        oldValue?: any;
+        newValue?: any;
+    }[];
+    summary: {
+        added: number;
+        removed: number;
+        modified: number;
+    };
+}
+
+/**
+ * 对比两个草稿版本
+ */
+async function compareDraftVersions(
+    configId: number,
+    fromVersion: number,
+    toVersion: number
+): Promise<DraftVersionDiff> {
+    // 获取两个版本的内容
+    const [fromContent, toContent] = await Promise.all([
+        getDraftHistoryContent(configId, fromVersion),
+        getDraftHistoryContent(configId, toVersion)
+    ]);
+
+    // JSON 深度对比
+    const changes = deepDiff(fromContent, toContent);
+
+    return {
+        fromVersion,
+        toVersion,
+        changes,
+        summary: {
+            added: changes.filter(c => c.type === 'added').length,
+            removed: changes.filter(c => c.type === 'removed').length,
+            modified: changes.filter(c => c.type === 'modified').length
+        }
+    };
+}
+
+/**
+ * 对比当前草稿与指定历史版本
+ */
+async function compareDraftWithHistory(
+    configId: number,
+    historyVersion: number
+): Promise<DraftVersionDiff> {
+    const config = await getConfig(configId);
+
+    const [historyContent, currentContent] = await Promise.all([
+        getDraftHistoryContent(configId, historyVersion),
+        oss.get(config.draft_oss_key).then(JSON.parse)
+    ]);
+
+    const changes = deepDiff(historyContent, currentContent);
+
+    return {
+        fromVersion: historyVersion,
+        toVersion: config.draft_version,
+        changes,
+        summary: {
+            added: changes.filter(c => c.type === 'added').length,
+            removed: changes.filter(c => c.type === 'removed').length,
+            modified: changes.filter(c => c.type === 'modified').length
+        }
+    };
+}
+```
+
+### 3.6 草稿历史清理
+
+> **清理策略**：为避免草稿历史无限增长，需要定期清理过期的历史版本。
+
+```typescript
+interface DraftHistoryCleanupPolicy {
+    maxVersions: number;           // 最多保留版本数，默认 50
+    maxDays: number;               // 最多保留天数，默认 30
+    keepPublishedBase: boolean;    // 是否保留发布前的最后一个草稿，默认 true
+}
+
+const DEFAULT_CLEANUP_POLICY: DraftHistoryCleanupPolicy = {
+    maxVersions: 50,
+    maxDays: 30,
+    keepPublishedBase: true
+};
+
+/**
+ * 清理配置的草稿历史
+ */
+async function cleanupDraftHistory(
+    configId: number,
+    policy: DraftHistoryCleanupPolicy = DEFAULT_CLEANUP_POLICY
+): Promise<{ deleted: number }> {
+    // 1. 获取需要保留的版本（发布前的基准版本）
+    let protectedVersions: number[] = [];
+    if (policy.keepPublishedBase) {
+        const publishHistory = await db.query(`
+            SELECT draft_version FROM ab_config_history
+            WHERE config_id = ? AND is_removed = 0
+            ORDER BY publish_version
+        `, [configId]);
+        // 保留每次发布前的草稿版本
+        protectedVersions = publishHistory.map(h => h.draft_version).filter(Boolean);
+    }
+
+    // 2. 按版本数清理（保留最新的 maxVersions 个）
+    const versionExcess = await db.query(`
+        SELECT id, draft_oss_key, draft_version
+        FROM ab_config_draft_history
+        WHERE config_id = ? AND is_removed = 0
+        ORDER BY draft_version DESC
+        LIMIT 999999 OFFSET ?
+    `, [configId, policy.maxVersions]);
+
+    // 3. 按时间清理（超过 maxDays 天的）
+    const timeExcess = await db.query(`
+        SELECT id, draft_oss_key, draft_version
+        FROM ab_config_draft_history
+        WHERE config_id = ? AND is_removed = 0
+        AND saved_at < DATE_SUB(NOW(), INTERVAL ? DAY)
+    `, [configId, policy.maxDays]);
+
+    // 4. 合并待删除列表，排除受保护版本
+    const toDeleteMap = new Map<number, { id: number; ossKey: string }>();
+    for (const item of [...versionExcess, ...timeExcess]) {
+        if (!protectedVersions.includes(item.draft_version)) {
+            toDeleteMap.set(item.id, { id: item.id, ossKey: item.draft_oss_key });
+        }
+    }
+
+    // 5. 执行删除
+    let deleted = 0;
+    for (const item of toDeleteMap.values()) {
+        try {
+            // 软删除数据库记录
+            await db.update('ab_config_draft_history', {
+                id: item.id,
+                is_removed: 1
+            });
+            // 删除 OSS 文件（可选，也可保留一段时间后再物理删除）
+            await oss.delete(item.ossKey);
+            deleted++;
+        } catch (error) {
+            console.error(`Failed to delete draft history ${item.id}:`, error);
+        }
+    }
+
+    return { deleted };
+}
+
+/**
+ * 定时任务：批量清理所有配置的草稿历史
+ */
+async function batchCleanupDraftHistory(): Promise<void> {
+    const configs = await db.query(`
+        SELECT DISTINCT config_id FROM ab_config_draft_history
+        WHERE is_removed = 0
+    `);
+
+    for (const { config_id } of configs) {
+        await cleanupDraftHistory(config_id);
+    }
+}
+```
+
+### 3.7 设计器集成
+
+设计器前端需要提供以下功能：
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              设计器界面                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  工具栏                                                              │   │
+│   │  [保存] [发布] [历史记录 ▾]                                          │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                      │                                      │
+│                                      ▼                                      │
+│                         ┌───────────────────────┐                          │
+│                         │     历史记录面板       │                          │
+│                         ├───────────────────────┤                          │
+│                         │ ○ v5 - 当前版本        │                          │
+│                         │ ○ v4 - 10分钟前       │                          │
+│                         │ ○ v3 - 1小时前        │                          │
+│                         │ ○ v2 - 昨天 15:30     │                          │
+│                         │ ○ v1 - 昨天 10:00     │                          │
+│                         ├───────────────────────┤                          │
+│                         │ [对比选中版本] [回退]  │                          │
+│                         └───────────────────────┘                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**设计器 API 调用示例：**
+
+```typescript
+// 1. 获取历史列表
+const history = await api.getDraftHistory(configId);
+
+// 2. 预览历史版本
+const content = await api.getDraftHistoryContent(configId, version);
+
+// 3. 对比两个版本
+const diff = await api.compareDraftVersions(configId, fromVersion, toVersion);
+
+// 4. 回退到历史版本
+await api.rollbackToDraftVersion(configId, targetVersion);
+```
+
+---
+
+## 4. 配置版本历史（发布历史）
+
+### 4.1 发布版本记录
 
 每次发布配置时，`publish_version` 递增，并记录到历史表：
 
@@ -282,7 +728,7 @@ async function publishConfig(configId: number, publisherId: number): Promise<voi
 }
 ```
 
-### 3.2 版本回滚
+### 4.2 版本回滚
 
 ```typescript
 interface RollbackInput {
@@ -351,7 +797,7 @@ async function rollbackConfig(input: RollbackInput): Promise<void> {
 }
 ```
 
-### 3.3 版本对比
+### 4.3 版本对比
 
 ```typescript
 interface VersionDiff {
@@ -397,9 +843,9 @@ async function compareVersions(
 
 ---
 
-## 4. Git 版本控制
+## 5. Git 版本控制
 
-### 4.1 Git 在版本管理中的定位
+### 5.1 Git 在版本管理中的定位
 
 ```
 ┌─────────────┐     主存储      ┌─────────────┐
@@ -434,7 +880,7 @@ async function compareVersions(
 3. **单向流动** - OSS → Git，Git 仅用于读取历史
 4. **分支隔离** - 模块版本对应 Git 分支
 
-### 4.2 仓库结构
+### 5.2 仓库结构
 
 ```
 Gitea 组织: assembox
@@ -487,7 +933,7 @@ Gitea 组织: assembox
         └── _system.json
 ```
 
-### 4.3 同步机制
+### 5.3 同步机制
 
 **同步时机：**
 
@@ -523,7 +969,7 @@ Gitea 组织: assembox
                                └──────────┘
 ```
 
-### 4.4 消息队列设计
+### 5.4 消息队列设计
 
 ```typescript
 // 同步任务消息结构
@@ -562,9 +1008,9 @@ const DEAD_LETTER_KEY = 'assembox:git-sync:dead-letter';
 
 ---
 
-## 5. Git 操作实现
+## 6. Git 操作实现
 
-### 5.1 初始化仓库
+### 6.1 初始化仓库
 
 ```typescript
 async function initRepository(): Promise<void> {
@@ -584,7 +1030,7 @@ async function initRepository(): Promise<void> {
 }
 ```
 
-### 5.2 创建新版本分支
+### 6.2 创建新版本分支
 
 ```typescript
 async function createVersionBranch(
@@ -606,7 +1052,7 @@ async function createVersionBranch(
 }
 ```
 
-### 5.3 发布配置同步
+### 6.3 发布配置同步
 
 ```typescript
 async function syncPublish(task: GitSyncTask): Promise<string> {
@@ -654,9 +1100,9 @@ function buildTagName(task: GitSyncTask): string {
 
 ---
 
-## 6. 历史查询与恢复
+## 7. 历史查询与恢复
 
-### 6.1 查看配置历史
+### 7.1 查看配置历史
 
 ```typescript
 async function getConfigHistory(
@@ -688,7 +1134,7 @@ async function getConfigHistory(
 }
 ```
 
-### 6.2 恢复历史版本
+### 7.2 恢复历史版本
 
 ```typescript
 async function restoreFromHistory(
@@ -720,9 +1166,9 @@ async function restoreFromHistory(
 
 ---
 
-## 7. 错误处理与重试
+## 8. 错误处理与重试
 
-### 7.1 重试策略
+### 8.1 重试策略
 
 ```typescript
 const DEFAULT_RETRY_CONFIG = {
@@ -753,7 +1199,7 @@ async function processWithRetry(task: GitSyncTask): Promise<void> {
 }
 ```
 
-### 7.2 常见错误处理
+### 8.2 常见错误处理
 
 | 错误类型 | 处理方式 |
 |---------|---------|
@@ -765,9 +1211,9 @@ async function processWithRetry(task: GitSyncTask): Promise<void> {
 
 ---
 
-## 8. 灾难恢复
+## 9. 灾难恢复
 
-### 8.1 从 Git 恢复到 OSS
+### 9.1 从 Git 恢复到 OSS
 
 > Git 中存储的是已发布配置，恢复时应恢复到 OSS 的 **published 区**。
 
@@ -798,7 +1244,7 @@ async function recoverFromGit(moduleCode: string, versionCode: string): Promise<
 }
 ```
 
-### 8.2 一致性校验
+### 9.2 一致性校验
 
 ```typescript
 async function checkConsistency(moduleCode: string, versionCode: string): Promise<ConsistencyReport> {
@@ -818,9 +1264,9 @@ async function checkConsistency(moduleCode: string, versionCode: string): Promis
 
 ---
 
-## 9. 监控与告警
+## 10. 监控与告警
 
-### 9.1 监控指标
+### 10.1 监控指标
 
 | 指标 | 说明 | 告警阈值 |
 |-----|------|---------|
@@ -830,7 +1276,7 @@ async function checkConsistency(moduleCode: string, versionCode: string): Promis
 | dead_letter_count | 死信队列数量 | > 10 |
 | git_push_duration | 推送耗时 | > 30s |
 
-### 9.2 健康检查
+### 10.2 健康检查
 
 ```typescript
 async function checkHealth(): Promise<GitSyncHealth> {
@@ -850,7 +1296,7 @@ async function checkHealth(): Promise<GitSyncHealth> {
 
 ---
 
-## 10. 配置项
+## 11. 配置项
 
 ```yaml
 # config/version.yaml
@@ -888,7 +1334,7 @@ version:
 
 ---
 
-## 11. 相关文档
+## 12. 相关文档
 
 - [存储层概览](./overview.md)
 - [缓存策略详细设计](./cache-strategy.md)

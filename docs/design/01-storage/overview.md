@@ -171,12 +171,15 @@
 
 | 场景 | 数据流 |
 |-----|-------|
-| 保存草稿 | 设计器 → TiDB(status=draft) + OSS(**草稿路径**) |
+| 保存草稿 | 设计器 → **归档当前草稿到历史** → OSS(**草稿路径**) → TiDB(draft_version++) |
 | 发布配置 | OSS(草稿→发布路径) → TiDB(status=published) → Redis(清除旧缓存) → Gitea(异步备份) |
 | 运行时读取 | Redis缓存 → (miss) → TiDB(**仅查published**) → OSS(**发布路径**) → 写入缓存 |
-| 版本回滚 | Gitea(历史) → OSS(恢复到发布路径) → TiDB(状态) → Redis(清除) |
+| 草稿回退 | ab_config_draft_history → OSS(draft-history) → 恢复到草稿路径 |
+| 发布回滚 | Gitea(历史) → OSS(恢复到发布路径) → TiDB(状态) → Redis(清除) |
 
-> **关键设计**: 草稿和已发布配置使用独立的 OSS key 字段，支持同时保存两个版本
+> **关键设计**:
+> - 草稿和已发布配置使用独立的 OSS key 字段，支持同时保存两个版本
+> - **草稿每次保存时，当前内容会先归档到历史**，支持设计过程中的版本回退
 
 **双字段设计说明**:
 
@@ -204,18 +207,30 @@
 └────┬─────┘
      │ ① 保存请求
      ▼
-┌──────────┐     ② 写入索引      ┌──────────┐
-│  服务层   │ ─────────────────▶ │   TiDB   │
-└────┬─────┘                    │ ab_config │
-     │                          │ status=   │
-     │ ③ 上传内容                │  draft    │
-     ▼                          └──────────┘
-┌──────────┐
-│   OSS    │  草稿路径: .../draft/_system.json
-└──────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                              服务层                                    │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │ ② 归档当前草稿到历史（如果存在）                                    │ │
+│  │                                                                  │ │
+│  │   OSS: draft/ → draft-history/xxx_v{N}.json                     │ │
+│  │   TiDB: INSERT INTO ab_config_draft_history                     │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                              │                                        │
+│                              ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │ ③ 保存新草稿                                                      │ │
+│  │                                                                  │ │
+│  │   OSS: 上传到 draft/ 路径                                         │ │
+│  │   TiDB: UPDATE ab_config SET draft_version++                    │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-> **注意**: 草稿内容存储在 `draft/` 子目录下，与发布内容隔离
+> **注意**:
+> - 草稿内容存储在 `draft/` 子目录下，与发布内容隔离
+> - **每次保存前，当前草稿会被复制到 `draft-history/` 目录**，确保历史可追溯
 
 #### 2.3.2 发布配置流程
 
@@ -491,6 +506,7 @@ CREATE TABLE ab_config (
     draft_content_hash  VARCHAR(64) COMMENT '草稿内容MD5哈希',
     draft_size          INT COMMENT '草稿内容大小(字节)',
     draft_updated_at    DATETIME COMMENT '草稿最后更新时间',
+    draft_version       INT NOT NULL DEFAULT 0 COMMENT '草稿版本号（每次保存+1，用于历史追踪）',
 
     -- 已发布内容（运行时读取用）
     published_oss_key       VARCHAR(500) COMMENT '已发布内容OSS key',
@@ -521,7 +537,7 @@ CREATE TABLE ab_config (
 
 ### 3.5 配置发布历史表 (ab_config_history)
 
-> 记录每次发布的历史版本，用于回滚和审计
+> 记录每次发布的历史版本，用于生产环境回滚和审计
 
 ```sql
 CREATE TABLE ab_config_history (
@@ -553,7 +569,56 @@ CREATE TABLE ab_config_history (
 ) COMMENT '配置发布历史表';
 ```
 
-### 3.6 ER图
+### 3.6 配置草稿历史表 (ab_config_draft_history)
+
+> 记录设计过程中每次保存的草稿版本，支持设计阶段的版本回退
+
+```sql
+CREATE TABLE ab_config_draft_history (
+    -- 主键
+    id              BIGINT NOT NULL COMMENT '主键',
+
+    -- 关联配置
+    config_id       BIGINT NOT NULL COMMENT '配置ID',
+    component_id    BIGINT NOT NULL COMMENT '组件ID',
+
+    -- 草稿版本信息
+    draft_version   INT NOT NULL COMMENT '草稿版本号（每次保存+1）',
+    draft_oss_key   VARCHAR(500) NOT NULL COMMENT '该版本草稿内容OSS key',
+    content_hash    VARCHAR(64) COMMENT '内容MD5哈希',
+    content_size    INT COMMENT '内容大小(字节)',
+
+    -- 变更摘要（可选，帮助用户识别版本）
+    change_summary  VARCHAR(500) COMMENT '变更摘要（自动生成或用户填写）',
+
+    -- 保存人
+    saved_at        DATETIME NOT NULL COMMENT '保存时间',
+    saver_id        BIGINT COMMENT '保存人ID',
+    saver_name      VARCHAR(50) COMMENT '保存人姓名',
+
+    -- 保存来源
+    save_source     VARCHAR(20) DEFAULT 'manual' COMMENT 'manual/auto_save/import',
+
+    -- 审计字段
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_removed      TINYINT(1) DEFAULT 0,
+
+    PRIMARY KEY (id)
+) COMMENT '配置草稿历史表';
+```
+
+**草稿历史与发布历史的区别：**
+
+| 对比项 | 草稿历史 (ab_config_draft_history) | 发布历史 (ab_config_history) |
+|-------|-----------------------------------|------------------------------|
+| 记录时机 | 每次保存草稿时 | 每次发布时 |
+| 保存频率 | 高（用户频繁保存） | 低（正式发布） |
+| 保留策略 | 可较激进清理（如保留最近50次或30天） | 长期保留（审计需要） |
+| 使用场景 | 设计器中回退、对比 | 生产环境回滚、审计追溯 |
+| 数据来源 | OSS draft-history 区 | OSS published 区 |
+| Git同步 | 不同步 | 异步同步到 Gitea |
+
+### 3.7 ER图
 
 > 注：表之间通过 ID 字段关联，不使用数据库外键约束（虚线表示逻辑关联）
 
@@ -563,6 +628,7 @@ erDiagram
     ab_module_version ||--o{ ab_component : "1:N 版本包含多个组件"
     ab_component ||--o{ ab_config : "1:N 组件有多层配置"
     ab_config ||--o{ ab_config_history : "1:N 配置有发布历史"
+    ab_config ||--o{ ab_config_draft_history : "1:N 配置有草稿历史"
 
     ab_module {
         bigint id PK "主键"
@@ -601,6 +667,7 @@ erDiagram
         varchar scope "system/global/tenant"
         varchar tenant "租户代码(scope=tenant时)"
         varchar draft_oss_key "草稿内容OSS key"
+        int draft_version "草稿版本号"
         varchar published_oss_key "已发布内容OSS key"
         varchar status "draft/published"
         int publish_version "发布版本号"
@@ -614,6 +681,17 @@ erDiagram
         varchar published_oss_key "该版本已发布内容OSS key"
         varchar git_commit_id "Git commit ID"
         datetime published_at "发布时间"
+    }
+
+    ab_config_draft_history {
+        bigint id PK "主键"
+        bigint config_id "配置ID"
+        bigint component_id "组件ID"
+        int draft_version "草稿版本号"
+        varchar draft_oss_key "草稿内容OSS key"
+        varchar change_summary "变更摘要"
+        datetime saved_at "保存时间"
+        varchar saver_name "保存人"
     }
 ```
 
@@ -648,11 +726,12 @@ erDiagram
 > **设计原则**：
 > 1. 将 scope 和 tenant 放在路径末尾，便于用前缀匹配一次查出所有层级配置
 > 2. **草稿和发布内容分离存储**，运行时只读取发布路径
+> 3. **草稿历史独立存储**，支持设计过程中的版本回退
 
 ```
 assembox/
 │
-├── draft/                                        # 草稿区（设计器编辑用）
+├── draft/                                        # 当前草稿区（设计器编辑用）
 │   └── {module_code}/
 │       └── {version_code}/
 │           └── {component_type}/
@@ -660,6 +739,16 @@ assembox/
 │                   ├── _system.json
 │                   ├── _global.json
 │                   └── _tenant_{tenant_code}.json
+│
+├── draft-history/                                # 草稿历史区（设计过程版本回退用）
+│   └── {module_code}/
+│       └── {version_code}/
+│           └── {component_type}/
+│               └── {component_code}/
+│                   ├── _system_v1.json           # 系统层草稿版本1
+│                   ├── _system_v2.json           # 系统层草稿版本2
+│                   ├── _global_v1.json           # 全局层草稿版本1
+│                   └── _tenant_{tenant_code}_v1.json
 │
 └── published/                                    # 发布区（运行时读取）
     └── {module_code}/
@@ -676,12 +765,21 @@ assembox/
 ```
 assembox/
 │
-├── draft/                                        # 草稿区
+├── draft/                                        # 当前草稿区
 │   └── order/
 │       └── V1/
 │           └── table/
 │               └── order_table/
-│                   └── _system.json              # 设计器正在编辑的草稿
+│                   └── _system.json              # 设计器正在编辑的草稿（最新版本）
+│
+├── draft-history/                                # 草稿历史区
+│   └── order/
+│       └── V1/
+│           └── table/
+│               └── order_table/
+│                   ├── _system_v1.json           # 草稿版本1
+│                   ├── _system_v2.json           # 草稿版本2
+│                   └── _system_v3.json           # 草稿版本3（当前草稿的前一个版本）
 │
 └── published/                                    # 发布区（运行时读取）
     └── order/
@@ -709,6 +807,8 @@ assembox/
 
 > **关键说明**：
 > - **设计器**读写 `draft/` 路径
+> - **保存时**当前草稿先归档到 `draft-history/`，再更新 `draft/`
+> - **草稿回退**从 `draft-history/` 恢复到 `draft/`
 > - **运行时**只读 `published/` 路径
 > - **发布操作**将 `draft/` 内容复制到 `published/`
 > - 这样保证即使不走缓存，运行时也不会读到未发布的草稿
@@ -742,14 +842,79 @@ function generateOssKey(config: ConfigInfo, area: OssArea): string {
     return `assembox/${area}/${config.moduleCode}/${config.versionCode}/${config.componentType}/${config.componentCode}/${scopeSuffix}.json`;
 }
 
+/**
+ * 生成草稿历史 OSS key
+ * - 保存草稿时，先将当前草稿归档到此路径
+ */
+function generateDraftHistoryOssKey(config: ConfigInfo, draftVersion: number): string {
+    const scopeSuffix = config.scope === 'system'
+        ? '_system'
+        : config.scope === 'global'
+            ? '_global'
+            : `_tenant_${config.tenant}`;
+
+    return `assembox/draft-history/${config.moduleCode}/${config.versionCode}/${config.componentType}/${config.componentCode}/${scopeSuffix}_v${draftVersion}.json`;
+}
+
 // 草稿路径示例 (存入 draft_oss_key，设计器/预览使用):
 // assembox/draft/order/V1/model/order_model/_system.json
 // assembox/draft/order/V1/table/order_table/_global.json
+
+// 草稿历史路径示例 (存入 ab_config_draft_history.draft_oss_key):
+// assembox/draft-history/order/V1/table/order_table/_system_v1.json
+// assembox/draft-history/order/V1/table/order_table/_system_v2.json
+// assembox/draft-history/order/V1/form/order_form/_tenant_T001_v3.json
 
 // 发布路径示例 (存入 published_oss_key，运行时/代码生成使用):
 // assembox/published/order/V1/model/order_model/_system.json
 // assembox/published/order/V1/table/order_table/_global.json
 // assembox/published/order/V1/form/order_form/_tenant_T001.json
+```
+
+**保存草稿流程（含历史归档）**:
+
+```typescript
+async function saveDraft(configId: string, content: object, saverId: number): Promise<void> {
+    const config = await db.findById(configId);
+    const contentStr = JSON.stringify(content, null, 2);
+
+    // 1. 归档当前草稿到历史（如果存在）
+    if (config.draft_oss_key && config.draft_version > 0) {
+        const historyOssKey = generateDraftHistoryOssKey(config, config.draft_version);
+        await oss.copy(config.draft_oss_key, historyOssKey);
+
+        // 记录到草稿历史表
+        await db.insert('ab_config_draft_history', {
+            config_id: configId,
+            component_id: config.component_id,
+            draft_version: config.draft_version,
+            draft_oss_key: historyOssKey,
+            content_hash: config.draft_content_hash,
+            content_size: config.draft_size,
+            saved_at: config.draft_updated_at,
+            saver_id: config.modifier_id,
+            saver_name: config.modifier_name,
+            save_source: 'manual'
+        });
+    }
+
+    // 2. 保存新草稿到当前位置
+    const draftOssKey = config.draft_oss_key || generateOssKey(config, 'draft');
+    await oss.put(draftOssKey, contentStr);
+
+    // 3. 更新配置记录
+    await db.update(configId, {
+        draft_oss_key: draftOssKey,
+        draft_content_hash: md5(contentStr),
+        draft_size: contentStr.length,
+        draft_updated_at: new Date(),
+        draft_version: config.draft_version + 1,
+        modifier_id: saverId,
+    });
+
+    // 4. 异步清理过期历史（可选）
+    await queueHistoryCleanup(configId);
+}
 ```
 
 **发布流程中的 OSS 操作**:
