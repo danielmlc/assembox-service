@@ -28,7 +28,7 @@ profiles.local:
       logging: false
   
   # Redis 缓存配置
-   redis:
+  redis:
     host: 'redis-svc-dev.infra.svc.cluster.local'
     port: 6379
     db: 15
@@ -36,11 +36,11 @@ profiles.local:
     password: '4AEeHq39qk'
   
   # OSS 文件存储配置
-  oss:
-    # 根据实际使用的 OSS 服务配置
-    # 示例：阿里云 OSS
-    accessKeyId: ''
-    accessKeySecret: ''
-    bucket: 'assembox'
-    region: 'oss-cn-hangzhou'
-    endpoint: ''
+  fileStorage:
+    provider: 'minio'
+    accessKey: 'kIE5EybIZYwJ3xTHynf6'
+    secretKey: '1xDBCWi0Ob6KYWeaDnrNKBK48jdUoaEF7oCsyuE5'
+    bucket: 'yunque-dev'
+    secure: false
+    endPoint: 192.168.5.72
+    port: 30394

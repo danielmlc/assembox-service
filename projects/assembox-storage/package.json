@@ -10,8 +10,7 @@
     "build": "nest build",
     "start": "node ./dist/main",
     "start:dev": "npm run cp:config && nest start --watch",
-    "start:debug": "nest start --debug --watch",
-    "start:prod": "node ./dist/main"
+    "start:debug": "nest start --debug --watch"
   },
   "dependencies": {
     "@cs/nest-cloud": "^2.0.2",
@@ -24,6 +23,7 @@
     "@nestjs/core": "^10.4.8",
     "@nestjs/mapped-types": "^2.1.0",
     "@nestjs/platform-express": "^10.4.8",
+    "@nestjs/typeorm": "^11.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
     "reflect-metadata": "^0.2.2",

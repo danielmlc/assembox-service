@@ -1,54 +1,22 @@
 import { Module } from '@nestjs/common';
+
+import { CommonModule } from './common/common.module';
+import { AbComponentModule } from './modules/component/component.module';
+import { AbConfigModule } from './modules/config/config.module';
+import { AbModuleModule } from './modules/module/module.module';
 import { ShareModule } from './share.module';
-
-// Services
-import {
-  OssService,
-  CacheService,
-  ConfigResolverService,
-  ConfigService,
-  ModuleService,
-  ComponentService,
-  VersionService,
-} from './services';
-
-// Controllers
-import {
-  ConfigController,
-  ModuleController,
-  ComponentController,
-} from './controllers';
 
 /**
  * 应用根模块
- * 导入 ShareModule 获取公共组件（数据库、Redis、OSS）
+ * 导入所有业务模块和公共模块
  */
 @Module({
   imports: [
-    ShareModule, // 导入共享模块（包含数据库、Redis、OSS）
-  ],
-  controllers: [
-    ConfigController,
-    ModuleController,
-    ComponentController,
-  ],
-  providers: [
-    // 业务服务
-    OssService,
-    CacheService,
-    ConfigResolverService,
-    ConfigService,
-    ModuleService,
-    ComponentService,
-    VersionService,
-  ],
-  exports: [
-    // 导出业务服务供其他模块使用
-    ConfigResolverService,
-    ConfigService,
-    ModuleService,
-    ComponentService,
-    VersionService,
+    ShareModule,    // 基础设施模块（数据库）
+    CommonModule,    // 公共模块（Redis、OSS、缓存等）
+    AbModuleModule, // 模块管理
+    AbComponentModule, // 组件管理
+    AbConfigModule, // 配置管理
   ],
 })
-export class AppModule {}
+export class AppModule { }

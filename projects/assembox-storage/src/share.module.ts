@@ -1,31 +1,13 @@
-import { Global } from '@nestjs/common';
 import { CSModule } from '@cs/nest-cloud';
-import { DatabaseModule } from '@cs/nest-typeorm';
-import { RedisModule } from '@cs/nest-redis';
-import { FileStorageModule } from '@cs/nest-files';
 import { ConfigService } from '@cs/nest-config';
-
-// 导入实体
-import {
-  AbModule,
-  AbModuleVersion,
-  AbComponent,
-  AbConfig,
-  AbConfigHistory,
-} from './entities';
-
-// 导入仓储
-import {
-  ModuleRepository,
-  ModuleVersionRepository,
-  ComponentRepository,
-  ConfigRepository,
-  ConfigHistoryRepository,
-} from './repositories';
+import { FileStorageModule } from '@cs/nest-files';
+import { RedisModule } from '@cs/nest-redis';
+import { DatabaseModule } from '@cs/nest-typeorm';
+import { Global } from '@nestjs/common';
 
 /**
  * 共享模块
- * 注册所有公共组件：数据库、Redis、OSS 等
+ * 注册数据库连接，供所有业务模块使用
  */
 @Global()
 @CSModule({
@@ -36,40 +18,27 @@ import {
       useFactory: async (config: ConfigService) => {
         return {
           ...config.get('mysql'),
-          entities: [
-            AbModule,
-            AbModuleVersion,
-            AbComponent,
-            AbConfig,
-            AbConfigHistory,
-          ],
-          repositories: [
-            ModuleRepository,
-            ModuleVersionRepository,
-            ComponentRepository,
-            ConfigRepository,
-            ConfigHistoryRepository,
-          ],
         };
       },
     }),
-
-    // Redis 模块（异步配置）
-    RedisModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: async (config: ConfigService) => {
-        return config.get('redis');
-      },
-    }),
-
-    // OSS 文件存储模块（异步配置）
     FileStorageModule.forRootAsync({
       inject: [ConfigService],
       useFactory: async (config: ConfigService) => {
-        return config.get('oss');
+        return {
+          ...config.get('fileStorage'),
+        };
+      },
+    }),
+    RedisModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: async (config: ConfigService) => {
+        // 确保 options 对象存在
+        return {
+          ...config.get('redis')
+        };
       },
     }),
   ],
-  exports: [DatabaseModule, RedisModule, FileStorageModule],
+  exports: [DatabaseModule, FileStorageModule, RedisModule],
 })
-export class ShareModule {}
+export class ShareModule { }

@@ -1,31 +1,38 @@
 {
   "compilerOptions": {
-      "allowJs": true,
-      "target": "esnext",
-      "module": "esnext",
-      "checkJs": true,
-      "strict": true,
-      "jsx": "preserve",
-      "declaration": true,
-      "skipLibCheck": true,
-      "esModuleInterop": true,
-      "sourceMap": true,
-      "allowSyntheticDefaultImports": true,
-      "removeComments": false,
-      "noEmitOnError": true,
-      "noImplicitAny": false,
-      "noImplicitThis": true,
-      "strictNullChecks": true,
-      "moduleResolution": "node",
-      "forceConsistentCasingInFileNames":true,
-      "baseUrl": ".",
-      "lib": [
-        "esnext",
-        "ES2015",
-        "ES2016",
-        "ES2017",
-        "DOM",
-        "dom"
-      ]
+    "allowJs": true,
+    "target": "esnext",
+    "module": "esnext",
+    "checkJs": true,
+    "strict": true,
+    "jsx": "preserve",
+    "declaration": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "sourceMap": true,
+    "allowSyntheticDefaultImports": true,
+    "removeComments": false,
+    "noEmitOnError": true,
+    "noImplicitAny": false,
+    "noImplicitThis": true,
+    "strictNullChecks": true,
+    "moduleResolution": "node",
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "lib": [
+      "esnext",
+      "ES2015",
+      "ES2016",
+      "ES2017",
+      "DOM",
+      "dom"
+    ]
   },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "packages",
+    "**/*.spec.ts",
+    "**/*.test.ts"
+  ]
 }
