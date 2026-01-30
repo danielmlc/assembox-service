@@ -70,18 +70,20 @@ CREATE TABLE ab_snapshot (
     -- 主键
     id              BIGINT NOT NULL COMMENT '主键',
 
-    -- 关联版本
-    version_id      BIGINT NOT NULL COMMENT '模块版本ID',
+    -- 关联流水线（核心）
+    pipeline_id     BIGINT NOT NULL COMMENT '流水线ID',
+    version_id      BIGINT NOT NULL COMMENT '模块版本ID（冗余）',
     module_code     VARCHAR(100) NOT NULL COMMENT '模块代码（冗余）',
     version_code    VARCHAR(20) NOT NULL COMMENT '版本号（冗余）',
+    pipeline_code   VARCHAR(50) NOT NULL COMMENT '流水线代码（冗余）',
 
-    -- 快照标识
+    -- 快照标识（同一流水线下唯一）
     snapshot_code   VARCHAR(20) NOT NULL COMMENT '快照号: S001, S002...',
     snapshot_name   VARCHAR(200) COMMENT '快照名称',
     description     VARCHAR(500) COMMENT '快照说明',
 
     -- 快照清单（核心字段）
-    manifest        JSON NOT NULL COMMENT '组件版本清单',
+    manifest        JSON NOT NULL COMMENT '组件版本清单，只含流水线对应 category 的组件',
 
     -- 快照状态
     status          VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT 'active/deprecated',
@@ -99,7 +101,7 @@ CREATE TABLE ab_snapshot (
 
     -- Git 信息
     git_commit_id   VARCHAR(64) COMMENT 'Git commit ID',
-    git_tag         VARCHAR(100) COMMENT 'Git tag',
+    git_tag         VARCHAR(100) COMMENT 'Git tag（如 order/V1/frontend/S003）',
 
     -- 统计信息
     component_count INT COMMENT '包含的组件数量',
@@ -118,7 +120,8 @@ CREATE TABLE ab_snapshot (
     sort_code       INT,
     is_enable       TINYINT(1) DEFAULT 1,
 
-    PRIMARY KEY (id, version_id)
+    PRIMARY KEY (id, pipeline_id),
+    UNIQUE KEY uk_pipeline_snapshot (pipeline_id, snapshot_code)
 ) COMMENT '配置快照表';
 ```
 
@@ -385,6 +388,8 @@ class SnapshotPublishService {
 
     /**
      * 构建 Manifest
+     * 
+     * 注意：只收录构建时配置(is_runtime=0)，运行时配置不关联快照
      */
     private async buildManifest(
         versionId: number,
@@ -394,6 +399,12 @@ class SnapshotPublishService {
     ): Promise<SnapshotManifest> {
         // 获取该版本所有组件的当前状态
         const configs = await this.configRepo.findByVersion(versionId, tx);
+        
+        // 获取组件元信息（用于判断 is_runtime）
+        const components$ = await this.componentRepo.findByVersion(versionId, tx);
+        const componentMap = new Map(
+            components$.map(c => [`${c.component_type}/${c.component_code}`, c])
+        );
 
         // 获取基准快照的 manifest
         let baseManifest: SnapshotManifest | null = null;
@@ -407,6 +418,12 @@ class SnapshotPublishService {
 
         for (const config of configs) {
             const key = `${config.component_type}/${config.component_code}`;
+            const componentMeta = componentMap.get(key);
+
+            // 忽略运行时配置，不关联到快照
+            if (componentMeta?.is_runtime === 1) {
+                continue;
+            }
 
             // 只记录 system 和 global 层的配置（tenant 层运行时继承查找）
             if (config.scope === 'tenant') {
@@ -727,6 +744,114 @@ class ConfigLoader {
 }
 ```
 
+### 4.3 运行时配置加载
+
+> **运行时配置 (is_runtime=1)**：如 filter、export、print 等，不关联快照，直接按模块版本加载
+
+```typescript
+class RuntimeConfigLoader {
+
+    /**
+     * 加载运行时配置（不走快照）
+     * 
+     * 运行时配置特点：
+     * - 不关联快照，版本只和模块版本有关
+     * - 需要 Redis 缓存提升性能
+     * - 支持三层继承（tenant > global > system）
+     * - 热更新：发布后立即生效，无需重新构建
+     */
+    async loadRuntimeConfig(ctx: LoadContext): Promise<ConfigContent> {
+        // 1. 获取组件元信息
+        const component = await this.componentRepo.findByCode(
+            ctx.moduleCode,
+            ctx.versionCode,
+            ctx.componentType,
+            ctx.componentCode
+        );
+
+        // 2. 验证是否为运行时配置
+        if (component.is_runtime !== 1) {
+            throw new Error(`${ctx.componentType}/${ctx.componentCode} 不是运行时配置`);
+        }
+
+        // 3. 检查缓存（运行时配置通常需要缓存）
+        if (component.is_cacheable) {
+            // 运行时配置的缓存 Key 不包含快照标识
+            const cacheKey = this.buildRuntimeCacheKey(ctx);
+            const cached = await this.redis.get(cacheKey);
+            if (cached) {
+                return JSON.parse(cached);
+            }
+        }
+
+        // 4. 按继承规则加载配置
+        const config = await this.loadWithInheritance(ctx, component.is_inheritable);
+
+        // 5. 写入缓存
+        if (component.is_cacheable && config) {
+            const cacheKey = this.buildRuntimeCacheKey(ctx);
+            await this.redis.setex(cacheKey, 3600, JSON.stringify(config));
+        }
+
+        return config;
+    }
+
+    /**
+     * 运行时配置的缓存 Key（不包含快照标识）
+     */
+    private buildRuntimeCacheKey(ctx: LoadContext): string {
+        return `assembox:runtime:${ctx.tenant}:${ctx.moduleCode}:${ctx.versionCode}:${ctx.componentType}:${ctx.componentCode}`;
+    }
+
+    /**
+     * 按继承规则加载
+     */
+    private async loadWithInheritance(
+        ctx: LoadContext,
+        isInheritable: boolean
+    ): Promise<ConfigContent | null> {
+        const scopes = isInheritable
+            ? [
+                { scope: 'tenant', tenant: ctx.tenant },
+                { scope: 'global', tenant: null },
+                { scope: 'system', tenant: null }
+              ]
+            : [
+                { scope: 'system', tenant: null }
+              ];
+
+        for (const { scope, tenant } of scopes) {
+            const config = await this.configRepo.findPublished(
+                ctx.moduleCode,
+                ctx.versionCode,
+                ctx.componentType,
+                ctx.componentCode,
+                scope,
+                tenant
+            );
+
+            if (config?.published_oss_key) {
+                const content = await this.oss.get(config.published_oss_key);
+                return JSON.parse(content);
+            }
+        }
+
+        return null;
+    }
+}
+```
+
+**构建时配置 vs 运行时配置加载对比：**
+
+| 对比项 | 构建时配置 | 运行时配置 |
+|-------|-----------|-----------|
+| 加载入口 | `ConfigLoader.loadConfig()` | `RuntimeConfigLoader.loadRuntimeConfig()` |
+| 快照关联 | ✅ 从快照 manifest 获取版本 | ❌ 不走快照，直接按模块版本 |
+| 缓存 Key | 包含快照标识 `assembox:resolved:{snapshot}:...` | 不含快照 `assembox:runtime:{tenant}:...` |
+| 典型场景 | 构建时生成代码，部署后不变 | 运行时动态加载，支持热更新 |
+| 发布生效 | 需重新构建部署 | 发布后立即生效 |
+| 继承支持 | ✅ 支持 | ✅ 支持 |
+
 ---
 
 ## 5. 快照回滚
@@ -921,8 +1046,8 @@ class HotfixService {
             published_at: new Date(),
         });
 
-        // 4. 清除缓存
-        await this.clearComponentCache(config);
+        // 4. 清除缓存（包括组件缓存和快照缓存）
+        await this.clearHotfixCache(config, version, snapshot);
 
         // 5. 同步到 Gitea
         await this.gitea.createCommit({
@@ -967,6 +1092,52 @@ class HotfixService {
         await this.snapshotRepo.update(snapshotId, {
             manifest: manifest,
             hotfix_components: null,  // 清空热修复记录
+        });
+    }
+
+    /**
+     * 清除热修复相关缓存
+     * 
+     * 热修复更新了 snapshot.hotfix_components，需要清除：
+     * 1. 组件自身的 L1/L2 缓存
+     * 2. 所有租户的 L0 快照缓存（因为 manifest 内容变化了）
+     */
+    private async clearHotfixCache(
+        config: Config,
+        version: ModuleVersion,
+        snapshot: Snapshot
+    ): Promise<void> {
+        const componentKey = `${config.component_type}/${config.component_code}`;
+
+        // 1. 清除组件的 L1/L2 缓存（所有租户）
+        const componentPatterns = [
+            // L1: 已解析配置缓存
+            `assembox:resolved:${snapshot.snapshot_code}:*:${version.module_code}:${version.version_code}:${config.component_type}:${config.component_code}`,
+            // L2: 原始配置缓存
+            `assembox:raw:${snapshot.snapshot_code}:*:${version.module_code}:${version.version_code}:${config.component_type}:${config.component_code}`,
+        ];
+
+        for (const pattern of componentPatterns) {
+            const keys = await this.redis.scanKeys(pattern);
+            if (keys.length > 0) {
+                await this.redis.del(...keys);
+            }
+        }
+
+        // 2. 清除所有租户的 L0 快照缓存
+        // 因为 hotfix_components 变更导致 manifest 内容变化
+        // 所有租户需要重新加载快照以获取最新的热修复信息
+        const snapshotCachePattern = `assembox:snapshot:${version.module_code}:${version.version_code}:*`;
+        const snapshotKeys = await this.redis.scanKeys(snapshotCachePattern);
+        if (snapshotKeys.length > 0) {
+            await this.redis.del(...snapshotKeys);
+        }
+
+        this.logger.info('Hotfix cache cleared', {
+            componentKey,
+            snapshotCode: snapshot.snapshot_code,
+            componentCacheKeysCleared: componentPatterns.length,
+            snapshotCacheKeysCleared: snapshotKeys.length,
         });
     }
 }

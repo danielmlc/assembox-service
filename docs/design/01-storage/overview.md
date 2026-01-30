@@ -158,16 +158,23 @@
 │                                                                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
 │  │ ab_module   │  │ ab_version  │  │ab_component │  │ ab_config   │         │
-│  │  模块定义    │  │  版本定义    │  │  组件注册   │  │  配置索引    │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └──────┬──────┘         │
-│                                                            │                │
-│                    ┌───────────────────┬───────────────────┤                │
-│                    ▼                   ▼                   ▼                │
-│          ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐      │
-│          │ab_config_draft_ │  │  ab_snapshot    │  │ab_config_history│      │
-│          │    history      │  │    快照表        │  │   发布历史       │      │
-│          │   草稿历史       │  │  (版本一致性)    │  └─────────────────┘      │
-│          └─────────────────┘  └─────────────────┘                           │
+│  │  模块定义    │──▶│  版本定义  │  │  组件注册   │  │  配置索引    │         │
+│  └─────────────┘  └──────┬──────┘  └─────────────┘  └──────┬──────┘         │
+│                          │                                 │                │
+│                          ▼                                 │                │
+│                 ┌─────────────────┐                        │                │
+│                 │ab_build_pipeline│◀───────────────────────┘                │
+│                 │  构建流水线      │                                         │
+│                 │ (frontend/backend)                                        │
+│                 └────────┬────────┘                                         │
+│                          │                                                  │
+│          ┌───────────────┼───────────────────┐                              │
+│          ▼               ▼                   ▼                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐                      │
+│  │ab_snapshot  │  │ab_tenant_   │  │ab_config_history│                      │
+│  │  快照表      │  │  snapshot   │  │   发布历史       │                      │
+│  │(版本一致性)  │  │(灰度发布用)  │  └─────────────────┘                      │
+│  └─────────────┘  └─────────────┘                                           │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
@@ -279,25 +286,34 @@
 ┌──────────┐
 │  设计器   │
 └────┬─────┘
-     │ ① 打包发布请求（选择要发布的组件）
+     │ ① 打包发布请求（选择流水线 + 要发布的组件）
+     │    pipeline_code: frontend 或 backend
      ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                              服务层                                    │
 │                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │ ② 生成快照                                                        │ │
+│  │ ② 获取/创建流水线                                                  │ │
 │  │                                                                  │ │
-│  │   - 生成快照号 (S001, S002...)                                   │ │
-│  │   - 收集所有组件当前的 publish_version                            │ │
-│  │   - 构建 manifest (组件版本清单)                                  │ │
-│  │   - 写入 ab_snapshot 表                                          │ │
+│  │   - 查询 ab_build_pipeline (version_id, pipeline_code)           │ │
+│  │   - 若不存在则创建                                                │ │
 │  └─────────────────────────────────────────────────────────────────┘ │
 │                              │                                        │
 │                              ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │ ③ 批量发布组件                                                    │ │
+│  │ ③ 生成快照                                                        │ │
 │  │                                                                  │ │
-│  │   FOR EACH 待发布组件:                                            │ │
+│  │   - 生成快照号 (S001, S002...)                                   │ │
+│  │   - 收集流水线对应 category 组件的 publish_version                │ │
+│  │   - 构建 manifest (仅含该流水线的组件)                            │ │
+│  │   - 写入 ab_snapshot 表 (关联 pipeline_id)                       │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                              │                                        │
+│                              ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │ ④ 批量发布组件                                                    │ │
+│  │                                                                  │ │
+│  │   FOR EACH 待发布组件 (属于该流水线 category):                     │ │
 │  │     - OSS: 复制 draft/ → published/                              │ │
 │  │     - TiDB: UPDATE ab_config SET status='published',            │ │
 │  │             publish_version++, published_oss_key=...            │ │
@@ -306,85 +322,148 @@
 │                              │                                        │
 │                              ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │ ④ 激活快照                                                        │ │
+│  │ ⑤ 激活快照                                                        │ │
 │  │                                                                  │ │
-│  │   - UPDATE ab_module_version SET active_snapshot_id = ?         │ │
+│  │   - UPDATE ab_build_pipeline SET active_snapshot_id = ?         │ │
+│  │     WHERE version_id = ? AND pipeline_code = ?                  │ │
 │  └─────────────────────────────────────────────────────────────────┘ │
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
      │
-     │ ⑤ 清除缓存
+     │ ⑥ 清除缓存
      ▼
 ┌──────────┐
 │  Redis   │  DEL assembox:{tenant}:resolved:...
 └────┬─────┘
      │
-     │ ⑥ 异步备份 (消息队列)
+     │ ⑦ 异步备份 (消息队列)
      ▼
 ┌──────────┐
-│  Gitea   │  git commit + push, git tag {module}/{version}/{snapshot}
+│  Gitea   │  git commit + push, git tag {module}/{version}/{pipeline}/{snapshot}
 └──────────┘
 ```
 
 > **关键设计**:
-> - 打包发布是原子操作，生成快照并批量发布选中的组件
-> - 快照清单记录所有组件的版本，未修改的组件保持原版本号
-> - 运行时基于激活的快照加载配置，保证版本一致性
+> - 打包发布按**流水线**进行，前端和后端独立发布
+> - 快照关联到流水线（pipeline_id），同一流水线下快照号递增
+> - manifest 只包含该流水线对应 category 的组件
 
-#### 2.3.3 运行时读取流程
+#### 2.3.3 构建时读取流程
+
+> **构建时读取**：发布构建时读取构建时配置（`is_runtime=0`），用于生成代码
+
+```
+┌──────────────┐
+│   构建服务    │
+└──────┬───────┘
+       │ ① 构建请求 (module, version, pipeline_code, tenant)
+       │    pipeline_code: frontend 或 backend
+       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                              服务层                                    │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │ ② 获取流水线激活快照                                               │ │
+│  │                                                                  │ │
+│  │   - 查询 ab_build_pipeline 获取 active_snapshot_id               │ │
+│  │   - 从 ab_snapshot 获取快照的 manifest                           │ │
+│  │   - manifest 只包含该流水线 category 的组件                       │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                              │                                        │
+│                              ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │ ③ 遍历 manifest.components                                       │ │
+│  │                                                                  │ │
+│  │   FOR EACH component in manifest:                                │ │
+│  │     - 获取 publishedOssKey                                       │ │
+│  │     - 按继承规则查找 tenant > global > system 层覆盖              │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                              │                                        │
+│                              ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │ ④ 从 OSS 批量读取配置内容                                         │ │
+│  │                                                                  │ │
+│  │   - 读取 published/ 路径下的配置 JSON                             │ │
+│  │   - 不走 Redis 缓存（构建过程一次性读取）                          │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                              │                                        │
+│                              ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │ ⑤ 生成代码                                                        │ │
+│  │                                                                  │ │
+│  │   - 根据配置生成前端/后端代码                                     │ │
+│  │   - 打包成可部署的制品                                            │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
+       │
+       ▼ ⑥ 部署制品
+┌──────────────┐
+│   部署服务    │
+└──────────────┘
+```
+
+> **关键逻辑**:
+> 1. 构建时读取**不走 Redis 缓存**，一次性批量从 OSS 读取
+> 2. 从**流水线**获取激活快照，manifest 只含该流水线 category 的组件
+> 3. 版本由快照 manifest 锁定，保证构建一致性
+> 4. 构建结果（生成的代码）被打包部署，运行时不再动态加载这些配置
+
+#### 2.3.4 运行时读取流程
+
+> **运行时读取**：应用运行时加载运行时配置（`is_runtime=1`），如 filter、export、print
 
 ```
 ┌──────────┐
 │  渲染器   │
 └────┬─────┘
-     │ ① 请求配置 (module, version, componentType, componentCode, tenant)
+     │ ① 请求运行时配置 (module, version, componentType, componentCode, tenant)
      ▼
-┌──────────┐     ② 获取激活快照     ┌──────────┐
-│  服务层   │ ─────────────────▶   │   TiDB   │
-└────┬─────┘                      │ab_snapshot│
-     │                            │(激活快照)  │
-     │◀───────────────────────────└───────────┘
-     │       manifest (组件版本清单)
+┌──────────┐      ② 查询组件特性       ┌──────────┐
+│  服务层   │ ─────────────────────▶   │   TiDB   │
+└────┬─────┘                          │ab_component│
+     │                                │ is_runtime │
+     │◀───────────────────────────────│is_cacheable│
+     │                                └────────────┘
      │
-     │        ③ 查询组件特性       ┌──────────┐
-     │ ─────────────────────────▶ │   TiDB   │
-     │                            │ab_component│
-     │                            │is_cacheable│
-     │                            └────┬───────┘
-     │                                 │
+     │          ┌────────────────────────────────────┐
+     │          │ 验证 is_runtime=1（运行时配置）       │
+     │          │ 运行时配置不走快照，直接按版本加载     │
+     │          └────────────────────────────────────┘
+     │
      │               ┌─────────────────┴─────────────────┐
      │               │                                   │
      │         is_cacheable=1                     is_cacheable=0
      │               │                                   │
      │               ▼                                   │
-     │        ④ 查询缓存                                 │
-     │   key含快照版本: assembox:{snapshot}:{tenant}:... │
+     │        ③ 查询缓存                                 │
+     │   key不含快照: assembox:runtime:{tenant}:...      │
      │               │                                   │
      │      ┌────────┴────────┐                         │
      │      │                 │                         │
      │    命中              未命中                       │
      │      │                 │                         │
      │      ▼                 ▼                         ▼
-     │ ┌──────────┐    ⑤ 按快照清单加载           ⑤ 按快照清单加载
+     │ ┌──────────┐    ④ 按继承规则加载           ④ 按继承规则加载
      │ │ 返回配置  │          │                         │
      │ └──────────┘          ▼                         ▼
      │                  ┌──────────────────────────────────────┐
-     │                  │ 从 manifest 获取组件的 publishedOssKey │
+     │                  │ 查询 ab_config 表（只查 published）    │
      │                  │ 按层级继承规则查找 (tenant>global>system)│
      │                  └──────────────┬───────────────────────┘
      │                                 │
-     │                        ⑥ 获取OSS内容
+     │                        ⑤ 获取OSS内容
      │                                 ▼
      │                            ┌──────────┐
      │                            │   OSS    │
      │                            │ 发布路径  │
      │                            └────┬─────┘
      │                                 │
-     │                        ⑦ 写入缓存 (is_cacheable=1)
+     │                        ⑥ 写入缓存 (is_cacheable=1)
      │                                 ▼
      │                            ┌──────────┐
      │◀───────────────────────────│  Redis   │
-     │         ⑧ 返回配置         └──────────┘
+     │         ⑦ 返回配置         └──────────┘
      ▼
 ┌──────────┐
 │  渲染页面 │
@@ -392,18 +471,31 @@
 ```
 
 > **关键逻辑**:
-> 1. **基于激活快照加载** - 从快照的 manifest 获取组件版本，保证一致性
-> 2. 根据 `is_cacheable` 决定是否走缓存，**缓存 key 包含快照标识**
+> 1. 运行时配置**不走快照**，版本只和模块版本有关
+> 2. 根据 `is_cacheable` 决定是否走缓存，**缓存 key 不包含快照标识**
 > 3. 根据 `is_inheritable` 决定是按层级查找还是仅查 system 层
-> 4. OSS 读取的是 manifest 中记录的 **publishedOssKey**
+> 4. 运行时配置支持**热更新**：发布后立即生效，无需重新构建
 
-#### 2.3.4 快照回滚流程
+**两种读取流程对比：**
+
+| 对比项 | 构建时读取 | 运行时读取 |
+|-------|-----------|-----------|
+| 触发时机 | 发布构建时 | 应用运行时 |
+| 配置类型 | is_runtime=0 | is_runtime=1 |
+| 典型配置 | model, page, table, form | filter, export, print |
+| 版本来源 | 快照 manifest 锁定 | 仅模块版本 |
+| Redis 缓存 | ❌ 不需要 | ✅ 需要 |
+| 缓存 Key | - | `assembox:runtime:{tenant}:...` |
+| 继承支持 | ✅ 支持 | ✅ 支持 |
+| 热更新 | ❌ 需重新构建部署 | ✅ 发布后立即生效 |
+
+#### 2.3.5 快照回滚流程
 
 ```
 ┌──────────┐
 │  管理后台 │
 └────┬─────┘
-     │ ① 回滚请求 (指定目标快照号，如 S002)
+     │ ① 回滚请求 (指定流水线 + 目标快照号，如 frontend/S002)
      ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                              服务层                                    │
@@ -411,7 +503,7 @@
 │  ┌─────────────────────────────────────────────────────────────────┐ │
 │  │ ② 验证目标快照                                                    │ │
 │  │                                                                  │ │
-│  │   - 检查 ab_snapshot 中目标快照是否存在                            │ │
+│  │   - 检查 ab_snapshot 中目标快照是否存在（属于该流水线）             │ │
 │  │   - 检查快照状态是否为 active（非 deprecated）                     │ │
 │  └─────────────────────────────────────────────────────────────────┘ │
 │                              │                                        │
@@ -419,9 +511,9 @@
 │  ┌─────────────────────────────────────────────────────────────────┐ │
 │  │ ③ 切换激活快照                                                    │ │
 │  │                                                                  │ │
-│  │   UPDATE ab_module_version                                       │ │
+│  │   UPDATE ab_build_pipeline                                       │ │
 │  │   SET active_snapshot_id = {目标快照ID}                           │ │
-│  │   WHERE id = {版本ID}                                            │ │
+│  │   WHERE version_id = ? AND pipeline_code = ?                     │ │
 │  └─────────────────────────────────────────────────────────────────┘ │
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
@@ -429,13 +521,13 @@
      │ ④ 清除缓存
      ▼
 ┌──────────┐
-│  Redis   │  DEL assembox:{snapshot}:*  (清除当前快照相关缓存)
+│  Redis   │  DEL assembox:{pipeline}:{snapshot}:*  (清除快照相关缓存)
 └────┬─────┘
      │
      │ ⑤ 记录回滚操作 (审计日志)
      ▼
 ┌──────────┐
-│  Gitea   │  git commit: "[rollback] S003 -> S002"
+│  Gitea   │  git commit: "[rollback] frontend: S003 -> S002"
 └──────────┘
 ```
 
@@ -484,7 +576,6 @@ CREATE TABLE ab_module (
 ```
 
 ### 3.2 版本表 (ab_module_version)
-
 ```sql
 CREATE TABLE ab_module_version (
     -- 主键
@@ -502,12 +593,6 @@ CREATE TABLE ab_module_version (
     -- 版本状态
     status          VARCHAR(20) NOT NULL DEFAULT 'draft' COMMENT 'draft/published/deprecated',
     published_at    DATETIME COMMENT '首次发布时间',
-
-    -- 快照管理
-    active_snapshot_id   BIGINT COMMENT '当前激活的快照ID',
-    active_snapshot_code VARCHAR(20) COMMENT '当前激活的快照号（冗余）',
-    latest_snapshot_id   BIGINT COMMENT '最新快照ID（可能未激活）',
-    latest_snapshot_code VARCHAR(20) COMMENT '最新快照号（冗余）',
 
     -- 关联代码分支
     git_branch      VARCHAR(100) COMMENT 'Git分支名称，格式: {module_code}/{version_code}',
@@ -528,9 +613,88 @@ CREATE TABLE ab_module_version (
 ) COMMENT '模块版本表';
 ```
 
-> **快照字段说明**:
-> - `active_snapshot_id`: 运行时使用的快照，切换此字段即可实现快照回滚
-> - `latest_snapshot_id`: 最新生成的快照，可能处于灰度测试中未全量激活
+> **设计说明**：版本表不再直接管理快照，快照管理移至 `ab_build_pipeline` 表，实现解耦
+
+### 3.2.1 构建流水线表 (ab_build_pipeline)
+
+> **解耦版本与快照**：每个版本包含多个构建流水线（如 frontend、backend），每个流水线独立管理快照
+
+```sql
+CREATE TABLE ab_build_pipeline (
+    -- 主键
+    id              BIGINT NOT NULL COMMENT '主键',
+
+    -- 关联版本
+    version_id      BIGINT NOT NULL COMMENT '模块版本ID',
+    module_code     VARCHAR(100) NOT NULL COMMENT '模块代码（冗余）',
+    version_code    VARCHAR(20) NOT NULL COMMENT '版本号（冗余）',
+
+    -- 流水线标识
+    pipeline_code   VARCHAR(50) NOT NULL COMMENT '流水线代码: frontend/backend/...',
+    pipeline_name   VARCHAR(100) NOT NULL COMMENT '流水线名称',
+
+    -- 关联的组件分类
+    categories      JSON NOT NULL COMMENT '包含的 category 列表，如 ["frontend"] 或 ["model","service"]',
+
+    -- 快照管理
+    active_snapshot_id   BIGINT COMMENT '当前激活快照ID',
+    active_snapshot_code VARCHAR(20) COMMENT '当前激活快照号（冗余）',
+    latest_snapshot_id   BIGINT COMMENT '最新快照ID（可能未激活）',
+    latest_snapshot_code VARCHAR(20) COMMENT '最新快照号（冗余）',
+
+    -- 审计字段
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    creator_id      BIGINT,
+    creator_name    VARCHAR(50),
+    modifier_at     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    modifier_id     BIGINT,
+    modifier_name   VARCHAR(50),
+    is_removed      TINYINT(1) DEFAULT 0,
+    version         BIGINT DEFAULT 0,
+
+    sort_code       INT,
+    is_enable       TINYINT(1) DEFAULT 1,
+
+    PRIMARY KEY (id, version_id),
+    UNIQUE KEY uk_version_pipeline (version_id, pipeline_code)
+) COMMENT '构建流水线表';
+```
+
+**预设流水线配置：**
+
+| pipeline_code | pipeline_name | categories | 说明 |
+|---------------|---------------|------------|------|
+| `frontend` | 前端构建 | `["frontend"]` | 包含 page、table、form 等 |
+| `backend` | 后端构建 | `["model", "service"]` | 包含 model、logic、api 等 |
+
+**层级结构：**
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                           ab_module (CRM)                            │
+└────────────────────────────────┬─────────────────────────────────────┘
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                      ab_module_version (v1.0)                        │
+└────────┬───────────────────────────────────────────────────┬─────────┘
+         │                                                   │
+         ▼                                                   ▼
+┌────────────────────────┐                     ┌────────────────────────┐
+│  ab_build_pipeline     │                     │  ab_build_pipeline     │
+│  (frontend)            │                     │  (backend)             │
+│  categories:           │                     │  categories:           │
+│    ["frontend"]        │                     │    ["model","service"] │
+│  active_snapshot: S003 │                     │  active_snapshot: S002 │
+└────────┬───────────────┘                     └────────┬───────────────┘
+         │                                              │
+         ▼                                              ▼
+┌─────────────────┐                          ┌─────────────────┐
+│ ab_snapshot S001│                          │ ab_snapshot S001│
+│ ab_snapshot S002│                          │ ab_snapshot S002│ ← active
+│ ab_snapshot S003│ ← active                 └─────────────────┘
+└─────────────────┘
+```
 
 ### 3.3 组件注册表 (ab_component)
 
@@ -557,6 +721,7 @@ CREATE TABLE ab_component (
     -- 组件特性
     is_inheritable  TINYINT(1) DEFAULT 1 COMMENT '是否支持继承，0=仅system层，1=支持三层继承',
     is_cacheable    TINYINT(1) DEFAULT 1 COMMENT '是否启用缓存，0=直接读库，1=走Redis缓存',
+    is_runtime      TINYINT(1) DEFAULT 0 COMMENT '是否运行时配置，0=构建时配置（关联快照），1=运行时配置（不关联快照）',
 
     -- 组件说明
     description     VARCHAR(500) COMMENT '组件描述',
@@ -577,6 +742,60 @@ CREATE TABLE ab_component (
     PRIMARY KEY (id, version_id)
 ) COMMENT '组件注册表';
 ```
+
+**组件特性字段说明：**
+
+| 字段 | 说明 | 影响 |
+|-----|------|------|
+| `is_inheritable` | 是否支持层级继承 | 0=仅从 system 层加载，1=按 tenant→global→system 查找 |
+| `is_cacheable` | 是否启用缓存 | 0=每次读库/OSS，1=走 Redis 缓存 |
+| `is_runtime` | 是否运行时配置 | 0=构建时配置（关联快照），1=运行时配置（不关联快照） |
+
+**构建时 vs 运行时配置对比：**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        配置类型对比                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  构建时配置 (is_runtime=0)                                           │   │
+│  │                                                                     │   │
+│  │  类型: model, logic, api, page, table, form                         │   │
+│  │  特点:                                                               │   │
+│  │    - 打包发布时关联到快照                                             │   │
+│  │    - 构建成代码后部署，运行时不需要动态加载                            │   │
+│  │    - 不需要 Redis 缓存（is_cacheable 通常为 0）                       │   │
+│  │    - 版本由快照锁定，保证一致性                                       │   │
+│  │    - 支持继承特性                                                    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  运行时配置 (is_runtime=1)                                           │   │
+│  │                                                                     │   │
+│  │  类型: filter, export, print, dashboard, chart                      │   │
+│  │  特点:                                                               │   │
+│  │    - 不关联快照，快照打包时忽略                                       │   │
+│  │    - 运行时动态加载，需要热更新能力                                   │   │
+│  │    - 需要 Redis 缓存提升性能（is_cacheable 通常为 1）                 │   │
+│  │    - 版本只和模块版本有关                                            │   │
+│  │    - 支持继承特性                                                    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**典型配置特性组合：**
+
+| 组件类型 | is_runtime | is_cacheable | is_inheritable | 说明 |
+|---------|------------|--------------|----------------|------|
+| model | 0 | 0 | 1 | 构建时配置，构建后不需缓存 |
+| page | 0 | 0 | 1 | 构建时配置，构建后不需缓存 |
+| table | 0 | 0 | 1 | 构建时配置，构建后不需缓存 |
+| form | 0 | 0 | 1 | 构建时配置，构建后不需缓存 |
+| filter | 1 | 1 | 1 | 运行时配置，需缓存 |
+| export | 1 | 1 | 1 | 运行时配置，需缓存 |
+| print | 1 | 1 | 1 | 运行时配置，需缓存 |
 
 ### 3.4 配置索引表 (ab_config)
 
@@ -645,6 +864,10 @@ CREATE TABLE ab_config_history (
     -- 关联配置
     config_id       BIGINT NOT NULL COMMENT '配置ID',
     component_id    BIGINT NOT NULL COMMENT '组件ID',
+
+    -- 关联快照（打包发布时记录）
+    snapshot_id     BIGINT COMMENT '所属快照ID，打包发布时关联',
+    snapshot_code   VARCHAR(20) COMMENT '快照号（冗余）',
 
     -- 发布信息
     publish_version INT NOT NULL COMMENT '发布版本号',
@@ -725,18 +948,20 @@ CREATE TABLE ab_snapshot (
     -- 主键
     id              BIGINT NOT NULL COMMENT '主键',
 
-    -- 关联版本
-    version_id      BIGINT NOT NULL COMMENT '模块版本ID',
+    -- 关联流水线（核心变更）
+    pipeline_id     BIGINT NOT NULL COMMENT '流水线ID',
+    version_id      BIGINT NOT NULL COMMENT '模块版本ID（冗余）',
     module_code     VARCHAR(100) NOT NULL COMMENT '模块代码（冗余）',
     version_code    VARCHAR(20) NOT NULL COMMENT '版本号（冗余）',
+    pipeline_code   VARCHAR(50) NOT NULL COMMENT '流水线代码（冗余）',
 
-    -- 快照标识
+    -- 快照标识（同一流水线下唯一）
     snapshot_code   VARCHAR(20) NOT NULL COMMENT '快照号: S001, S002...',
-    snapshot_name   VARCHAR(200) COMMENT '快照名称（可选，如：订单模块2.0正式版）',
+    snapshot_name   VARCHAR(200) COMMENT '快照名称（可选，如：订单模块2.0前端正式版）',
     description     VARCHAR(500) COMMENT '快照说明',
 
     -- 快照清单（核心字段）
-    manifest        JSON NOT NULL COMMENT '组件版本清单，记录所有组件的发布版本',
+    manifest        JSON NOT NULL COMMENT '组件版本清单，只含流水线对应 category 的组件',
 
     -- 快照状态
     status          VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT 'active/deprecated',
@@ -751,7 +976,7 @@ CREATE TABLE ab_snapshot (
 
     -- Git信息
     git_commit_id   VARCHAR(64) COMMENT 'Git commit ID',
-    git_tag         VARCHAR(100) COMMENT 'Git tag（如 order/V1/S003）',
+    git_tag         VARCHAR(100) COMMENT 'Git tag（如 order/V1/frontend/S003）',
 
     -- 审计字段
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -766,7 +991,8 @@ CREATE TABLE ab_snapshot (
     sort_code       INT,
     is_enable       TINYINT(1) DEFAULT 1,
 
-    PRIMARY KEY (id, version_id)
+    PRIMARY KEY (id, pipeline_id),
+    UNIQUE KEY uk_pipeline_snapshot (pipeline_id, snapshot_code)
 ) COMMENT '配置快照表';
 ```
 
@@ -932,22 +1158,6 @@ erDiagram
     }
 ```
 
-### 3.9 唯一约束汇总
-
-> **设计说明**：保留雪花算法生成的 BIGINT 主键，通过唯一约束保证业务数据完整性
-
-| 表名 | 唯一约束 | 业务含义 |
-|-----|---------|---------|
-| ab_module | `uk_module_code (module_code)` | 模块代码全局唯一 |
-| ab_module_version | `uk_module_version (module_id, version_code)` | 同一模块下版本号唯一 |
-| ab_component | `uk_version_component (version_id, component_type, component_code)` | 同一版本下组件类型+代码唯一 |
-| ab_config | `uk_component_scope_tenant (component_id, scope, tenant)` | 同一组件在作用域+租户下唯一 |
-| ab_config_history | `uk_config_publish_version (config_id, publish_version)` | 同一配置的发布版本唯一 |
-| ab_config_draft_history | `uk_config_draft_version (config_id, draft_version)` | 同一配置的草稿版本唯一 |
-| ab_snapshot | `uk_version_snapshot (version_id, snapshot_code)` | 同一版本下快照号唯一 |
-| ab_tenant_snapshot | `uk_tenant_version (tenant, version_id)` | 租户+版本唯一（见 snapshot-management.md） |
-
-> **注意**：`ab_config` 表的 `tenant` 字段可为 NULL（当 scope=system 或 scope=global 时），MySQL 的 UNIQUE 约束会正确处理 NULL 值。
 
 ---
 
@@ -1536,7 +1746,7 @@ async function loadFromDatabase(ctx: LoadContext, isInheritable: boolean): Promi
 
 ### 8.1 快照概述
 
-快照（Snapshot）是打包发布的产物，锁定一组组件的发布版本，保证运行时配置的一致性。
+快照（Snapshot）是打包发布的产物，锁定一组组件的发布版本，保证发布时配置的一致性。
 
 **核心价值：**
 
