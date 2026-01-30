@@ -1,0 +1,40 @@
+{
+  "name": "assembox-storage",
+  "version": "1.0.0",
+  "description": "Assembox 存储层服务",
+  "main": "dist/main.js",
+  "private": true,
+  "scripts": {
+    "cp:config": "cp ./config.yaml ./dist",
+    "prebuild": "rimraf dist",
+    "build": "nest build",
+    "start": "node ./dist/main",
+    "start:dev": "npm run cp:config && nest start --watch",
+    "start:debug": "nest start --debug --watch"
+  },
+  "dependencies": {
+    "@cs/nest-cloud": "^2.0.2",
+    "@cs/nest-common": "^3.0.1",
+    "@cs/nest-config": "^3.0.3",
+    "@cs/nest-files": "^1.0.2",
+    "@cs/nest-redis": "^2.0.0",
+    "@cs/nest-typeorm": "^1.1.2",
+    "@nestjs/common": "^10.4.8",
+    "@nestjs/core": "^10.4.8",
+    "@nestjs/mapped-types": "^2.1.0",
+    "@nestjs/platform-express": "^10.4.8",
+    "@nestjs/typeorm": "^11.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.0.0",
+    "@types/node": "^20.11.0",
+    "rimraf": "^5.0.5",
+    "ts-loader": "^9.5.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,38 @@
+{"context":"DatabaseModule","level":"info","message":"Database global_platform connection \"default\" initialized successfully!","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"NestFactory","level":"info","message":"Starting Nest application...","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"ShareModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"ContextModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"AppModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"DiscoveryModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"ConfigInitialize","level":"info","message":"Configuration file loaded successfully!","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"ConfigModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"LoggerModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"RpcModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"NACOS Logger","level":"verbose","message":"[PushReceiver] udp server listen on 0.0.0.0:60055","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"DatabaseModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"EntityRegistModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"InstanceLoader","level":"info","message":"TestModule dependencies initialized","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RoutesResolver","level":"info","message":"AppController {/ormServer}:","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer, GET} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RoutesResolver","level":"info","message":"RpcController {/ormServer/rpc}:","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/rpc, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/rpc, GET} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/rpc/docs, GET} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RoutesResolver","level":"info","message":"TestController {/ormServer/test}:","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/batch, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/:id, GET} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/findMany, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/:id, PUT} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/:id/soft, DELETE} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/:id/hard, DELETE} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/advanced-query, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/batch-soft, DELETE} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/batch/status, PUT} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/sql, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/transaction, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/ormServer/test/transaction/rollback, POST} route","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"NestApplication","level":"info","message":"Nest application successfully started","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"","level":"info","message":"\n- service node-database-service is ready now! \n- service access address: http://192.168.5.90:3025/ormServer \n- service document access address: http://192.168.5.90:3025/ormServer/docs","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"NACOS Logger","level":"verbose","message":"[NameProxy][REGISTER-SERVICE] dev registering service: DEFAULT_GROUP@@node-database-service with instance:{\"instanceId\":\"CMl4PzGSO2pTDgFZXt-lH\",\"ip\":\"192.168.5.90\",\"port\":3025,\"weight\":1,\"healthy\":true,\"enabled\":true,\"ephemeral\":true,\"clusterName\":\"DEFAULT\",\"serviceName\":\"node-database-service\",\"metadata\":{}}","pid":1748,"timestamp":"2025/10/10 00:40:44"}
+{"context":"NamingRegisting","level":"info","message":"The service node-database-service successfully went online to the registry!","pid":1748,"timestamp":"2025/10/10 00:40:44"}
