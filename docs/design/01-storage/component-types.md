@@ -1,7 +1,7 @@
 # 组件类型扩展规范
 
 > **状态**: 设计中
-> **更新日期**: 2025-01-22
+> **更新日期**: 2025-01-30
 
 ---
 
@@ -42,6 +42,62 @@
 2. **类型决定行为** - 不同类型有不同的校验规则和处理逻辑
 3. **分类便于管理** - 类型按业务场景分为 model / service / frontend
 4. **约定大于配置** - 通过命名和分类约定减少配置复杂度
+
+### 1.4 组件类型注册表存储策略
+
+组件类型注册采用**代码优先 + 数据库扩展**的混合策略：
+
+| 存储位置 | 类型范围 | 说明 |
+|---------|---------|------|
+| 代码硬编码 | 内置类型 (model, logic, api, page, table, form, filter, export) | 系统核心类型，随代码版本发布 |
+| 数据库表 `ab_component_type` | 扩展类型 | 运行时动态添加的自定义类型 |
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          组件类型注册表加载流程                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. 服务启动                                                                 │
+│     │                                                                       │
+│     ▼                                                                       │
+│  2. 加载内置类型（代码中的 COMPONENT_TYPE_REGISTRY）                          │
+│     │                                                                       │
+│     ▼                                                                       │
+│  3. 查询数据库 ab_component_type 表，加载扩展类型                             │
+│     │                                                                       │
+│     ▼                                                                       │
+│  4. 合并到运行时注册表（扩展类型不能覆盖内置类型）                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**扩展类型表结构（可选，按需启用）：**
+
+```sql
+CREATE TABLE ab_component_type (
+    id              BIGINT NOT NULL COMMENT '主键',
+    type_code       VARCHAR(50) NOT NULL COMMENT '类型代码',
+    type_name       VARCHAR(100) NOT NULL COMMENT '类型名称',
+    category        VARCHAR(50) NOT NULL COMMENT '分类: model/service/frontend',
+    description     VARCHAR(500) COMMENT '类型描述',
+    schema_version  VARCHAR(50) COMMENT 'Schema版本标识',
+    schema_content  JSON COMMENT 'JSON Schema内容',
+    depends_on      JSON COMMENT '依赖的类型列表',
+    default_inheritable TINYINT(1) DEFAULT 1,
+    default_cacheable   TINYINT(1) DEFAULT 1,
+    sort_order      INT DEFAULT 0,
+    is_enable       TINYINT(1) DEFAULT 1,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_removed      TINYINT(1) DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_type_code (type_code)
+) COMMENT '组件类型扩展表（存储自定义组件类型）';
+```
+
+> **设计决策**：
+> - 内置类型硬编码保证核心功能稳定性
+> - 扩展类型存数据库支持运行时动态添加
+> - 扩展类型的 type_code 不能与内置类型冲突
 
 ---
 
@@ -158,10 +214,18 @@ interface ComponentTypeDefinition {
     /**
      * 默认是否启用缓存（创建组件时的默认值）
      * - true: 运行时读取走 Redis 缓存
-     * - false: 直接从数据库读取，适用于审批流等实时性要求高的配置
+     * - false: 直接从数据库读取，适用于构建时配置
      * 具体组件可在 ab_component.is_cacheable 中覆盖此默认值
      */
     defaultCacheable: boolean;
+
+    /**
+     * 默认是否为运行时配置（创建组件时的默认值）
+     * - true: 运行时配置，不关联快照，运行时动态加载
+     * - false: 构建时配置，关联快照，打包后部署
+     * 具体组件可在 ab_component.is_runtime 中覆盖此默认值
+     */
+    defaultRuntime: boolean;
 
     /** 扩展配置 */
     options: {
@@ -195,7 +259,8 @@ const MODEL_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 数据模型支持继承，允许租户扩展字段
-    defaultCacheable: true,     // 数据模型可缓存
+    defaultCacheable: false,    // 构建时配置，构建后不需缓存
+    defaultRuntime: false,      // 构建时配置，关联快照
     options: {
         requiresModel: false,
         previewable: false,
@@ -221,7 +286,8 @@ const LOGIC_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 逻辑编排支持继承
-    defaultCacheable: true,     // 逻辑编排可缓存
+    defaultCacheable: false,    // 构建时配置，构建后不需缓存
+    defaultRuntime: false,      // 构建时配置，关联快照
     options: {
         requiresModel: true,
         previewable: true,
@@ -247,7 +313,8 @@ const API_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // API 接口支持继承
-    defaultCacheable: true,     // API 接口可缓存
+    defaultCacheable: false,    // 构建时配置，构建后不需缓存
+    defaultRuntime: false,      // 构建时配置，关联快照
     options: {
         requiresModel: true,
         previewable: false,
@@ -273,7 +340,8 @@ const PAGE_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 页面配置支持继承
-    defaultCacheable: true,     // 页面配置可缓存
+    defaultCacheable: false,    // 构建时配置，构建后不需缓存
+    defaultRuntime: false,      // 构建时配置，关联快照
     options: {
         requiresModel: true,
         previewable: true,
@@ -299,7 +367,8 @@ const TABLE_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 表格配置支持继承
-    defaultCacheable: true,     // 表格配置可缓存
+    defaultCacheable: false,    // 构建时配置，构建后不需缓存
+    defaultRuntime: false,      // 构建时配置，关联快照
     options: {
         requiresModel: true,
         previewable: true,
@@ -325,7 +394,8 @@ const FORM_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 表单配置支持继承
-    defaultCacheable: true,     // 表单配置可缓存
+    defaultCacheable: false,    // 构建时配置，构建后不需缓存
+    defaultRuntime: false,      // 构建时配置，关联快照
     options: {
         requiresModel: true,
         previewable: true,
@@ -351,7 +421,8 @@ const FILTER_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 过滤器配置支持继承
-    defaultCacheable: true,     // 过滤器配置可缓存
+    defaultCacheable: true,     // 运行时配置，需要缓存
+    defaultRuntime: true,       // 运行时配置，不关联快照
     options: {
         requiresModel: true,
         previewable: true,
@@ -377,7 +448,8 @@ const DETAIL_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 详情页配置支持继承
-    defaultCacheable: true,     // 详情页配置可缓存
+    defaultCacheable: false,    // 构建时配置，构建后不需缓存
+    defaultRuntime: false,      // 构建时配置，关联快照
     options: {
         requiresModel: true,
         previewable: true,
@@ -403,7 +475,8 @@ const EXPORT_TYPE: ComponentTypeDefinition = {
     supportedScopes: ['system', 'global', 'tenant'],
     allowMultiple: true,
     defaultInheritable: true,   // 打印导出配置支持继承
-    defaultCacheable: true,     // 打印导出配置可缓存
+    defaultCacheable: true,     // 运行时配置，需要缓存
+    defaultRuntime: true,       // 运行时配置，不关联快照
     options: {
         requiresModel: true,
         previewable: true,

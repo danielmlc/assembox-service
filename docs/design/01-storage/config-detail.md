@@ -1,7 +1,7 @@
 # 配置详细设计
 
 > **状态**: 设计中
-> **更新日期**: 2025-01-22
+> **更新日期**: 2025-01-30
 
 ---
 
@@ -428,7 +428,7 @@ export class ConfigLoadService {
     ): Promise<ConfigContent | null> {
         // 查询数据库获取 OSS Key（只查 published 状态）
         const configIndex = await this.db.query(`
-            SELECT oss_key FROM ab_config
+            SELECT published_oss_key FROM ab_config
             WHERE module_code = ?
               AND version_code = ?
               AND component_type = ?
@@ -444,12 +444,13 @@ export class ConfigLoadService {
         }
 
         // 从 OSS published 路径加载内容
-        const content = await this.oss.getObjectAsString(configIndex.oss_key);
+        const content = await this.oss.getObjectAsString(configIndex.published_oss_key);
         return JSON.parse(content);
     }
 
-    private buildCacheKey(ctx: LoadConfigContext): string {
-        return `assembox:resolved:${ctx.tenant}:${ctx.moduleCode}:${ctx.versionCode}:${ctx.componentType}:${ctx.componentCode}`;
+    private buildCacheKey(ctx: LoadConfigContext, snapshotCode: string): string {
+        // 缓存 Key 包含快照标识，确保快照切换后缓存自动隔离
+        return `assembox:resolved:${snapshotCode}:${ctx.tenant}:${ctx.moduleCode}:${ctx.versionCode}:${ctx.componentType}:${ctx.componentCode}`;
     }
 }
 ```

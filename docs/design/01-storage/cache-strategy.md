@@ -1,7 +1,7 @@
 # 缓存策略详细设计
 
 > **状态**: 设计中
-> **更新日期**: 2025-01-22
+> **更新日期**: 2025-01-30
 
 ---
 
@@ -49,17 +49,26 @@
 > **重要**: 缓存仅适用于 `is_cacheable=1` 的组件。
 > 对于 `is_cacheable=0` 的组件（如审批流配置、敏感配置等），将跳过缓存直接从数据库读取。
 
-### 2.1 三层缓存结构
+### 2.1 四层缓存结构
+
+> **重要变更**: 引入快照机制后，L1 缓存 key 需要包含快照标识，确保快照切换时缓存自动失效。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              Redis 缓存                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  L1: 已解析配置缓存 (Resolved Config)                                        │
+│  L0: 快照缓存 (Snapshot)                         【新增】                     │
+│      存储激活快照的 manifest 信息                                             │
+│      Key: assembox:snapshot:{module}:{version}:{tenant}                     │
+│      TTL: 10 分钟                                                           │
+│      场景: 运行时获取激活快照，确定组件版本                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  L1: 已解析配置缓存 (Resolved Config)            【变更】                     │
 │      存储租户实际使用的配置（已完成继承查找）                                    │
-│      Key: assembox:resolved:{tenant}:{module}:{version}:{type}:{code}       │
+│      Key: assembox:resolved:{snapshot}:{tenant}:{module}:{version}:{type}:{code}
 │      TTL: 1 小时                                                            │
 │      场景: 运行时渲染器直接使用                                               │
+│      **注意: key 包含 snapshot 标识，快照切换后自动使用新缓存**                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  L2: 原始配置缓存 (Raw Config)                                               │
 │      存储从 OSS 加载的原始配置内容                                            │
@@ -75,25 +84,47 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+**快照对缓存的影响：**
+
+| 场景 | 缓存行为 |
+|-----|---------|
+| 快照切换（回滚） | L1 key 包含快照号，自动使用新缓存，无需主动清除 |
+| 打包发布新快照 | 清除 L0 快照缓存，L1 自动指向新快照 |
+| 热修复 | 清除该组件的 L1/L2 缓存 |
+| 灰度发布 | 不同租户 L0 返回不同快照，L1 自动隔离 |
+
 ### 2.2 缓存 Key 设计规范
 
 ```typescript
 // Key 前缀
 const KEY_PREFIX = 'assembox';
 
-// L1: 已解析配置
+// L0: 快照缓存 【新增】
+function snapshotKey(
+    moduleCode: string,
+    versionCode: string,
+    tenant: string
+): string {
+    return `${KEY_PREFIX}:snapshot:${moduleCode}:${versionCode}:${tenant}`;
+}
+// 示例: assembox:snapshot:order:V1:T001
+// 示例: assembox:snapshot:order:V1:_default (默认快照)
+
+// L1: 已解析配置 【变更：增加 snapshot 参数】
 function resolvedConfigKey(
+    snapshotCode: string,  // 新增：快照号
     tenant: string,
     moduleCode: string,
     versionCode: string,
     componentType: string,
     componentCode: string
 ): string {
-    return `${KEY_PREFIX}:resolved:${tenant}:${moduleCode}:${versionCode}:${componentType}:${componentCode}`;
+    return `${KEY_PREFIX}:resolved:${snapshotCode}:${tenant}:${moduleCode}:${versionCode}:${componentType}:${componentCode}`;
 }
-// 示例: assembox:resolved:T001:order:V1:table:order_table
+// 示例: assembox:resolved:S003:T001:order:V1:table:order_table
+// 说明: 快照切换时（如 S003 -> S002），key 自动不同，无需主动清除
 
-// L2: 原始配置
+// L2: 原始配置（保持不变）
 function rawConfigKey(
     scope: string,
     tenant: string | null,
@@ -117,11 +148,29 @@ function metaKey(type: string, identifier: string): string {
 // 示例: assembox:meta:modules:list
 ```
 
+**快照缓存的优势：**
+
+```
+场景：从 S003 回滚到 S002
+
+旧方案（无快照标识）:
+  1. 切换激活快照 S003 -> S002
+  2. 需要主动清除所有 L1 缓存
+  3. 清除期间可能读到旧数据
+
+新方案（带快照标识）:
+  1. 切换激活快照 S003 -> S002
+  2. L0 缓存自动失效，返回 S002
+  3. L1 key 变为 assembox:resolved:S002:...（自动隔离）
+  4. 无需主动清除，无脏读风险
+```
+
 ### 2.3 TTL 策略
 
 | 缓存层 | TTL | 说明 |
 |-------|-----|------|
-| L1 已解析配置 | 1 小时 | 高频读取，主动失效为主 |
+| L0 快照 | 10 分钟 | 快照信息，灰度切换时需快速生效 |
+| L1 已解析配置 | 1 小时 | 高频读取，key 含快照号，切换自动隔离 |
 | L2 原始配置 | 30 分钟 | 中频读取，辅助继承查找 |
 | L3 元数据 | 10 分钟 | 低频变更，短 TTL 保证新鲜 |
 
@@ -129,7 +178,7 @@ function metaKey(type: string, identifier: string): string {
 
 ## 3. 缓存读取流程
 
-### 3.1 配置读取完整流程
+### 3.1 配置读取完整流程（基于快照）
 
 ```typescript
 interface LoadContext {
@@ -143,6 +192,70 @@ interface LoadContext {
 interface ComponentMeta {
     is_inheritable: boolean;
     is_cacheable: boolean;
+}
+
+interface SnapshotInfo {
+    snapshotCode: string;
+    manifest: SnapshotManifest;
+}
+
+// 【新增】获取激活快照（带 L0 缓存）
+async function getActiveSnapshot(
+    moduleCode: string,
+    versionCode: string,
+    tenant: string
+): Promise<SnapshotInfo> {
+    const l0Key = snapshotKey(moduleCode, versionCode, tenant);
+
+    const cached = await redis.get(l0Key);
+    if (cached) {
+        metrics.increment('cache.l0.hit');
+        return JSON.parse(cached);
+    }
+    metrics.increment('cache.l0.miss');
+
+    // 1. 查询租户级快照配置（灰度发布场景）
+    const tenantSnapshot = await db.queryOne(`
+        SELECT s.snapshot_code, s.manifest
+        FROM ab_tenant_snapshot ts
+        JOIN ab_snapshot s ON ts.snapshot_id = s.id
+        WHERE ts.module_code = ? AND ts.version_code = ? AND ts.tenant = ?
+          AND ts.is_removed = 0
+          AND (ts.effective_at IS NULL OR ts.effective_at <= NOW())
+          AND (ts.expired_at IS NULL OR ts.expired_at > NOW())
+    `, [moduleCode, versionCode, tenant]);
+
+    let snapshotInfo: SnapshotInfo;
+
+    if (tenantSnapshot) {
+        snapshotInfo = {
+            snapshotCode: tenantSnapshot.snapshot_code,
+            manifest: tenantSnapshot.manifest,
+        };
+    } else {
+        // 2. 使用版本级默认快照
+        const version = await db.queryOne(`
+            SELECT s.snapshot_code, s.manifest
+            FROM ab_module_version v
+            JOIN ab_snapshot s ON v.active_snapshot_id = s.id
+            WHERE v.module_code = ? AND v.version_code = ?
+              AND v.is_removed = 0
+        `, [moduleCode, versionCode]);
+
+        if (!version) {
+            throw new NoActiveSnapshotError(moduleCode, versionCode);
+        }
+
+        snapshotInfo = {
+            snapshotCode: version.snapshot_code,
+            manifest: version.manifest,
+        };
+    }
+
+    // 写入 L0 缓存
+    await redis.setex(l0Key, TTL.L0_SNAPSHOT, JSON.stringify(snapshotInfo));
+
+    return snapshotInfo;
 }
 
 // 获取组件元信息（带 L3 缓存）
@@ -175,7 +288,14 @@ async function getComponentMeta(
 }
 
 async function loadConfig(ctx: LoadContext): Promise<ConfigContent> {
-    // Step 0: 获取组件元信息，检查是否启用缓存
+    // Step 0: 获取激活快照 【新增】
+    const snapshot = await getActiveSnapshot(
+        ctx.moduleCode,
+        ctx.versionCode,
+        ctx.tenant
+    );
+
+    // Step 1: 获取组件元信息，检查是否启用缓存
     const meta = await getComponentMeta(
         ctx.moduleCode,
         ctx.versionCode,
@@ -186,11 +306,12 @@ async function loadConfig(ctx: LoadContext): Promise<ConfigContent> {
     // 如果组件不启用缓存，直接走数据库查询
     if (!meta.is_cacheable) {
         metrics.increment('cache.bypass');
-        return await resolveConfigDirect(ctx, meta.is_inheritable);
+        return await resolveConfigBySnapshot(ctx, snapshot, meta.is_inheritable);
     }
 
-    // Step 1: 查询 L1 缓存（已解析配置）
+    // Step 2: 查询 L1 缓存（key 包含快照号）【变更】
     const l1Key = resolvedConfigKey(
+        snapshot.snapshotCode,  // 使用快照号
         ctx.tenant,
         ctx.moduleCode,
         ctx.versionCode,
@@ -205,13 +326,46 @@ async function loadConfig(ctx: LoadContext): Promise<ConfigContent> {
     }
     metrics.increment('cache.l1.miss');
 
-    // Step 2: 执行继承查找
-    const config = await resolveConfig(ctx, meta.is_inheritable);
+    // Step 3: 基于快照执行继承查找 【变更】
+    const config = await resolveConfigBySnapshot(ctx, snapshot, meta.is_inheritable);
 
-    // Step 3: 写入 L1 缓存
+    // Step 4: 写入 L1 缓存
     await redis.setex(l1Key, TTL.L1_RESOLVED, JSON.stringify(config));
 
     return config;
+}
+
+// 【新增】基于快照的配置加载
+async function resolveConfigBySnapshot(
+    ctx: LoadContext,
+    snapshot: SnapshotInfo,
+    isInheritable: boolean
+): Promise<ConfigContent> {
+    const componentKey = `${ctx.componentType}/${ctx.componentCode}`;
+
+    // 1. 从 manifest 获取基准配置信息
+    const componentInfo = snapshot.manifest.components[componentKey];
+    if (!componentInfo) {
+        throw new ComponentNotFoundError(componentKey);
+    }
+
+    // 2. 检查热修复覆盖
+    const hotfix = snapshot.manifest.hotfix_components?.[componentKey];
+    const baseOssKey = hotfix?.publishedOssKey || componentInfo.publishedOssKey;
+
+    // 3. 如果支持继承，按层级查找
+    if (isInheritable) {
+        // 先查租户层覆盖
+        const tenantConfig = await loadRawConfig('tenant', ctx.tenant, ctx);
+        if (tenantConfig) return tenantConfig;
+
+        // 再查全局层覆盖
+        const globalConfig = await loadRawConfig('global', null, ctx);
+        if (globalConfig) return globalConfig;
+    }
+
+    // 4. 使用快照中记录的配置
+    return await oss.getObject(baseOssKey);
 }
 ```
 
@@ -375,16 +529,95 @@ async function listComponents(
 
 | 事件 | 失效范围 | 说明 |
 |-----|---------|------|
-| 发布系统层配置 | L1 所有租户 + L2 system | 影响所有租户 |
-| 发布全局层配置 | L1 所有租户 + L2 global | 影响未覆盖的租户 |
-| 发布租户层配置 | L1 该租户 + L2 该租户 | 仅影响该租户 |
+| **打包发布（新快照）** | L0 快照缓存 | L1 key 含快照号，自动隔离，无需清除 |
+| **快照回滚** | L0 快照缓存 | 同上，L1 自动指向旧快照 |
+| **热修复发布** | L0 + L1 该组件 + L2 | 热修复更新快照的 hotfix_components |
+| **灰度发布** | L0 灰度租户 | 灰度租户的快照缓存 |
+| 发布租户层配置 | L1 该租户 + L2 该租户 | 仅影响该租户（继承覆盖） |
 | 新增/删除组件 | L3 组件列表 | 元数据变更 |
-| 版本切换 | L1/L2/L3 该模块所有 | 全量失效 |
+| 版本切换 | L0/L1/L2/L3 该模块所有 | 全量失效 |
+
+**快照机制带来的简化：**
+
+| 场景 | 旧方案 | 新方案（快照） |
+|-----|--------|--------------|
+| 正常发布 | 清除所有 L1 缓存 | 仅清除 L0，L1 自动隔离 |
+| 回滚 | 清除所有 L1 缓存 + 恢复 OSS | 仅清除 L0，秒级生效 |
+| 灰度 | 无法实现 | 清除灰度租户 L0 即可 |
 
 ### 4.2 精准失效实现
 
 ```typescript
-interface PublishEvent {
+// 【新增】打包发布时的缓存失效
+interface SnapshotPublishEvent {
+    moduleCode: string;
+    versionCode: string;
+    snapshotCode: string;
+    affectedTenants?: string[];  // 灰度发布时指定
+}
+
+async function invalidateOnSnapshotPublish(event: SnapshotPublishEvent): Promise<void> {
+    const keysToDelete: string[] = [];
+
+    if (event.affectedTenants && event.affectedTenants.length > 0) {
+        // 灰度发布：仅清除指定租户的 L0 缓存
+        for (const tenant of event.affectedTenants) {
+            const l0Key = snapshotKey(event.moduleCode, event.versionCode, tenant);
+            keysToDelete.push(l0Key);
+        }
+    } else {
+        // 全量发布：清除所有租户的 L0 缓存
+        const pattern = `${KEY_PREFIX}:snapshot:${event.moduleCode}:${event.versionCode}:*`;
+        const matchedKeys = await scanKeys(pattern);
+        keysToDelete.push(...matchedKeys);
+    }
+
+    // 批量删除
+    if (keysToDelete.length > 0) {
+        await redis.del(...keysToDelete);
+        metrics.increment('cache.l0.invalidate', keysToDelete.length);
+    }
+
+    // 注意：L1 缓存无需清除！
+    // 因为 L1 key 包含 snapshotCode，新快照会使用新的 key
+}
+
+// 【新增】热修复时的缓存失效
+interface HotfixEvent {
+    moduleCode: string;
+    versionCode: string;
+    snapshotCode: string;
+    componentType: string;
+    componentCode: string;
+}
+
+async function invalidateOnHotfix(event: HotfixEvent): Promise<void> {
+    const keysToDelete: string[] = [];
+
+    // 1. 清除 L0 快照缓存（manifest 中的 hotfix_components 变了）
+    const l0Pattern = `${KEY_PREFIX}:snapshot:${event.moduleCode}:${event.versionCode}:*`;
+    const l0Keys = await scanKeys(l0Pattern);
+    keysToDelete.push(...l0Keys);
+
+    // 2. 清除该组件的 L1 缓存
+    const l1Pattern = `${KEY_PREFIX}:resolved:${event.snapshotCode}:*:${event.moduleCode}:${event.versionCode}:${event.componentType}:${event.componentCode}`;
+    const l1Keys = await scanKeys(l1Pattern);
+    keysToDelete.push(...l1Keys);
+
+    // 3. 清除 L2 原始配置缓存
+    const l2Pattern = `${KEY_PREFIX}:raw:*:${event.moduleCode}:${event.versionCode}:${event.componentType}:${event.componentCode}`;
+    const l2Keys = await scanKeys(l2Pattern);
+    keysToDelete.push(...l2Keys);
+
+    // 批量删除
+    if (keysToDelete.length > 0) {
+        await redis.del(...keysToDelete);
+        metrics.increment('cache.hotfix.invalidate', keysToDelete.length);
+    }
+}
+
+// 租户层配置发布（继承覆盖场景）
+interface TenantConfigPublishEvent {
     moduleCode: string;
     versionCode: string;
     componentType: string;
@@ -393,7 +626,7 @@ interface PublishEvent {
     tenant?: string;
 }
 
-async function invalidateOnPublish(event: PublishEvent): Promise<void> {
+async function invalidateOnTenantConfigPublish(event: TenantConfigPublishEvent): Promise<void> {
     const keysToDelete: string[] = [];
 
     // 1. 失效 L2 原始配置缓存
@@ -409,21 +642,15 @@ async function invalidateOnPublish(event: PublishEvent): Promise<void> {
 
     // 2. 失效 L1 已解析配置缓存
     if (event.scope === 'system' || event.scope === 'global') {
-        // 系统层/全局层变更，需要失效所有租户的 L1 缓存
-        // 使用 SCAN 找到匹配的 keys
-        const pattern = `${KEY_PREFIX}:resolved:*:${event.moduleCode}:${event.versionCode}:${event.componentType}:${event.componentCode}`;
+        // 系统层/全局层变更，需要失效所有快照下所有租户的 L1 缓存
+        const pattern = `${KEY_PREFIX}:resolved:*:*:${event.moduleCode}:${event.versionCode}:${event.componentType}:${event.componentCode}`;
         const matchedKeys = await scanKeys(pattern);
         keysToDelete.push(...matchedKeys);
     } else {
-        // 租户层变更，仅失效该租户的 L1 缓存
-        const l1Key = resolvedConfigKey(
-            event.tenant!,
-            event.moduleCode,
-            event.versionCode,
-            event.componentType,
-            event.componentCode
-        );
-        keysToDelete.push(l1Key);
+        // 租户层变更，失效该租户在所有快照下的 L1 缓存
+        const pattern = `${KEY_PREFIX}:resolved:*:${event.tenant}:${event.moduleCode}:${event.versionCode}:${event.componentType}:${event.componentCode}`;
+        const matchedKeys = await scanKeys(pattern);
+        keysToDelete.push(...matchedKeys);
     }
 
     // 3. 批量删除
@@ -606,6 +833,7 @@ if (!configIndex) {
 
 // TTL 配置
 const TTL = {
+    L0_SNAPSHOT: 600,       // 10分钟（快照缓存）
     L1_RESOLVED: 3600,      // 1小时
     L2_RAW: 1800,           // 30分钟
     L2_RAW_NULL: 300,       // 5分钟（空结果）
@@ -823,6 +1051,7 @@ class HybridCache {
 
 | 指标 | 说明 | 告警阈值 |
 |-----|------|---------|
+| cache.l0.hit_rate | L0 快照缓存命中率 | < 90% |
 | cache.l1.hit_rate | L1 命中率 | < 95% |
 | cache.l2.hit_rate | L2 命中率 | < 80% |
 | cache.latency.p99 | 缓存操作 P99 延迟 | > 50ms |
@@ -830,20 +1059,23 @@ class HybridCache {
 | cache.memory.usage | Redis 内存使用率 | > 80% |
 | cache.keys.count | 缓存 key 数量 | 仅监控 |
 | cache.bypass | 缓存绕过次数（is_cacheable=0） | 仅监控 |
+| cache.l0.invalidate | L0 快照缓存失效次数 | 仅监控 |
+| cache.hotfix.invalidate | 热修复缓存失效次数 | > 5次/天 |
 
 ### 8.2 监控实现
 
 ```typescript
 class CacheMetrics {
-    private hits = { l1: 0, l2: 0, l3: 0 };
-    private misses = { l1: 0, l2: 0, l3: 0 };
+    private hits = { l0: 0, l1: 0, l2: 0, l3: 0 };
+    private misses = { l0: 0, l1: 0, l2: 0, l3: 0 };
     private bypasses = 0;  // is_cacheable=0 导致的缓存绕过
+    private invalidations = { l0: 0, hotfix: 0 };  // 快照相关失效
 
-    hit(level: 'l1' | 'l2' | 'l3'): void {
+    hit(level: 'l0' | 'l1' | 'l2' | 'l3'): void {
         this.hits[level]++;
     }
 
-    miss(level: 'l1' | 'l2' | 'l3'): void {
+    miss(level: 'l0' | 'l1' | 'l2' | 'l3'): void {
         this.misses[level]++;
     }
 
@@ -851,7 +1083,11 @@ class CacheMetrics {
         this.bypasses++;
     }
 
-    getHitRate(level: 'l1' | 'l2' | 'l3'): number {
+    invalidate(type: 'l0' | 'hotfix'): void {
+        this.invalidations[type]++;
+    }
+
+    getHitRate(level: 'l0' | 'l1' | 'l2' | 'l3'): number {
         const total = this.hits[level] + this.misses[level];
         return total === 0 ? 1 : this.hits[level] / total;
     }
@@ -998,5 +1234,6 @@ cache:
 ## 11. 相关文档
 
 - [存储层概览](./overview.md)
-- [配置继承与合并](./overview.md#5-配置继承与合并)
-- [Gitea 版本管理](./gitea-version.md)
+- [快照管理详细设计](./snapshot-management.md)
+- [配置继承与合并](./overview.md#6-配置设计)
+- [版本管理详细设计](./version-management.md)
