@@ -56,3 +56,199 @@
 {"context":"","level":"info","message":"\n- 服务 node-lc-assembox-storage-service 已经正常启动! \n- 服务访问地址: http://192.168.5.41:3100/assembox-storage \n- 服务的RESTfulAPI文档地址: http://192.168.5.41:3100/assembox-storage/docs \n- 服务的RPC文档地址: http://192.168.5.41:3100/assembox-storage/rpc/docs","pid":28368,"timestamp":"2026/01/29 11:44:14"}
 {"context":"NACOS Logger","level":"verbose","message":"[NameProxy][REGISTER-SERVICE] dev registering service: DEFAULT_GROUP@@node-lc-assembox-storage-service with instance:{\"instanceId\":\"ziwQtTI9lHBmSG1qnhNuT\",\"ip\":\"192.168.5.41\",\"port\":3100,\"weight\":1,\"healthy\":true,\"enabled\":true,\"ephemeral\":true,\"clusterName\":\"DEFAULT\",\"serviceName\":\"node-lc-assembox-storage-service\",\"metadata\":{}}","pid":28368,"timestamp":"2026/01/29 11:44:14"}
 {"context":"NamingRegisting","level":"info","message":"服务 node-lc-assembox-storage-service 在注册中心成功注册!","pid":28368,"timestamp":"2026/01/29 11:44:14"}
+{"context":"DatabaseModule","level":"info","message":"Database dev_pf_lc connection \"default\" initialized successfully!","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"NestFactory","level":"info","message":"Starting Nest application...","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"AppModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"ShareModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"ContextModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"DiscoveryModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"AbModuleModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"ConfigInitialize","level":"info","message":"Configuration file loaded successfully!","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"ConfigModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"LoggerModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"FileStorageModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"RedisModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"RpcModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"CommonModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"AbComponentModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"AbConfigModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"NACOS Logger","level":"verbose","message":"[PushReceiver] udp server listen on 0.0.0.0:64328","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"InstanceLoader","level":"info","message":"DatabaseModule dependencies initialized","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RoutesResolver","level":"info","message":"RpcController {/assembox-storage/rpc}:","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc/docs, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RoutesResolver","level":"info","message":"ModuleController {/assembox-storage/api/assembox/modules}:","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, PUT} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/code/:code, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, DELETE} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/activate-version, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions/published, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:moduleId/versions/:versionId/publish, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:moduleId/versions/:versionId/deprecate, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RoutesResolver","level":"info","message":"ComponentController {/assembox-storage/api/assembox/components}:","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, PUT} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId/category/:category, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId/type/:type, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/find, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, DELETE} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RoutesResolver","level":"info","message":"ConfigController {/assembox-storage/api/assembox/configs}:","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/load, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/batch-load, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:componentId/draft, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft/:configId, DELETE} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/publish, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/batch-publish, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/rollback, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/history, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/stats, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/restore, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/compare, GET} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/cleanup, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft-history/cleanup-before-date, POST} route","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"NestApplication","level":"info","message":"Nest application successfully started","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"","level":"info","message":"\n- 服务 node-lc-assembox-storage-service 已经正常启动! \n- 服务访问地址: http://192.168.5.41:3100/assembox-storage \n- 服务的RESTfulAPI文档地址: http://192.168.5.41:3100/assembox-storage/docs \n- 服务的RPC文档地址: http://192.168.5.41:3100/assembox-storage/rpc/docs","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"NACOS Logger","level":"verbose","message":"[NameProxy][REGISTER-SERVICE] dev registering service: DEFAULT_GROUP@@node-lc-assembox-storage-service with instance:{\"instanceId\":\"R-w68kxcEYPQz4Y9MQr1H\",\"ip\":\"192.168.5.41\",\"port\":3100,\"weight\":1,\"healthy\":true,\"enabled\":true,\"ephemeral\":true,\"clusterName\":\"DEFAULT\",\"serviceName\":\"node-lc-assembox-storage-service\",\"metadata\":{}}","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"NamingRegisting","level":"info","message":"服务 node-lc-assembox-storage-service 在注册中心成功注册!","pid":24068,"timestamp":"2026/01/29 14:52:47"}
+{"context":"DatabaseModule","level":"info","message":"Database dev_pf_lc connection \"default\" initialized successfully!","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"NestFactory","level":"info","message":"Starting Nest application...","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"AppModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"ShareModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"ContextModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"DiscoveryModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"AbModuleModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"ConfigInitialize","level":"info","message":"Configuration file loaded successfully!","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"ConfigModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"LoggerModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"FileStorageModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"RedisModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"RpcModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"CommonModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"AbComponentModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"AbConfigModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"NACOS Logger","level":"verbose","message":"[PushReceiver] udp server listen on 0.0.0.0:64769","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"InstanceLoader","level":"info","message":"DatabaseModule dependencies initialized","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RoutesResolver","level":"info","message":"RpcController {/assembox-storage/rpc}:","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc/docs, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RoutesResolver","level":"info","message":"ModuleController {/assembox-storage/api/assembox/modules}:","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, PUT} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/code/:code, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, DELETE} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/activate-version, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions/published, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:moduleId/versions/:versionId/publish, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:moduleId/versions/:versionId/deprecate, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RoutesResolver","level":"info","message":"ComponentController {/assembox-storage/api/assembox/components}:","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, PUT} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId/category/:category, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId/type/:type, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/find, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, DELETE} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RoutesResolver","level":"info","message":"ConfigController {/assembox-storage/api/assembox/configs}:","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/load, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/batch-load, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:componentId/draft, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft/:configId, DELETE} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/publish, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/batch-publish, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/rollback, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/history, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/stats, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/restore, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/compare, GET} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/cleanup, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft-history/cleanup-before-date, POST} route","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"NestApplication","level":"info","message":"Nest application successfully started","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"","level":"info","message":"\n- 服务 node-lc-assembox-storage-service 已经正常启动! \n- 服务访问地址: http://192.168.5.41:3100/assembox-storage \n- 服务的RESTfulAPI文档地址: http://192.168.5.41:3100/assembox-storage/docs \n- 服务的RPC文档地址: http://192.168.5.41:3100/assembox-storage/rpc/docs","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"NACOS Logger","level":"verbose","message":"[NameProxy][REGISTER-SERVICE] dev registering service: DEFAULT_GROUP@@node-lc-assembox-storage-service with instance:{\"instanceId\":\"sCCiM1WX-51fApkXaeQwl\",\"ip\":\"192.168.5.41\",\"port\":3100,\"weight\":1,\"healthy\":true,\"enabled\":true,\"ephemeral\":true,\"clusterName\":\"DEFAULT\",\"serviceName\":\"node-lc-assembox-storage-service\",\"metadata\":{}}","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"NamingRegisting","level":"info","message":"服务 node-lc-assembox-storage-service 在注册中心成功注册!","pid":25068,"timestamp":"2026/01/29 15:15:51"}
+{"context":"NACOS Logger","level":"warn","message":"Error [ResponseTimeoutError]: Response timeout for 5000ms, PUT http://dev-nacos.yearrow.com:8848/nacos/v1/ns/instance/beat -1 (connected: true, keepalive socket: false, socketHandledRequests: 1, socketHandledResponses: 0)\nheaders: {}\n    at Timeout._onTimeout (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\urllib@2.44.0\\node_modules\\urllib\\lib\\urllib.js:1002:15)\n    at listOnTimeout (node:internal/timers:581:17)\n    at process.processTimers (node:internal/timers:519:7) {\n  requestId: 36,\n  data: undefined,\n  path: '/nacos/v1/ns/instance/beat?beat=%7B%22serviceName%22%3A%22DEFAULT_GROUP%40%40node-lc-assembox-storage-service%22%2C%22ip%22%3A%22192.168.5.41%22%2C%22port%22%3A3100%2C%22cluster%22%3A%22DEFAULT%22%2C%22weight%22%3A1%2C%22metadata%22%3A%7B%7D%2C%22scheduled%22%3Atrue%7D&namespaceId=dev&serviceName=DEFAULT_GROUP%40%40node-lc-assembox-storage-service&username=nacos&password=nacos!%40%23123456',\n  status: -1,\n  headers: {},\n  res: {\n    status: -1,\n    statusCode: -1,\n    statusMessage: null,\n    headers: {},\n    size: 0,\n    aborted: false,\n    rt: 437468,\n    keepAliveSocket: false,\n    data: undefined,\n    requestUrls: [ 'http://dev-nacos.yearrow.com:8848/nacos/v1/ns/instance/beat' ],\n    timing: null,\n    remoteAddress: '198.18.0.42',\n    remotePort: 8848,\n    socketHandledRequests: 1,\n    socketHandledResponses: 0\n  }\n}","pid":25068,"timestamp":"2026/01/29 15:25:57"}
+{"context":"NACOS Logger","level":"error","message":"Error: [CLIENT-BEAT] failed to send beat: {\"serviceName\":\"DEFAULT_GROUP@@node-lc-assembox-storage-service\",\"ip\":\"192.168.5.41\",\"port\":3100,\"cluster\":\"DEFAULT\",\"weight\":1,\"metadata\":{},\"scheduled\":true}, caused by failed to req API: /nacos/v1/ns/instance/beat after all servers(dev-nacos.yearrow.com:8848) tried\n    at NameProxy._reqAPI (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\proxy.js:207:13)\n    at async NameProxy.sendBeat (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\proxy.js:282:23)\n    at async BeatReactor._beat (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\beat_reactor.js:58:32)\n    at async Promise.all (index 0)\n    at async BeatReactor._startBeat (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\beat_reactor.js:67:7) undefined","pid":25068,"timestamp":"2026/01/29 15:25:57"}
+{"context":"DatabaseModule","level":"info","message":"Database dev_pf_lc connection \"default\" initialized successfully!","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"NestFactory","level":"info","message":"Starting Nest application...","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"AppModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"ShareModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"ContextModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"DiscoveryModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"AbModuleModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"ConfigInitialize","level":"info","message":"Configuration file loaded successfully!","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"ConfigModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"LoggerModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"FileStorageModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"RedisModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"RpcModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"CommonModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"AbComponentModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"AbConfigModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"NACOS Logger","level":"verbose","message":"[PushReceiver] udp server listen on 0.0.0.0:60386","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"InstanceLoader","level":"info","message":"DatabaseModule dependencies initialized","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RoutesResolver","level":"info","message":"RpcController {/assembox-storage/rpc}:","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/rpc/docs, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RoutesResolver","level":"info","message":"ModuleController {/assembox-storage/api/assembox/modules}:","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, PUT} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/code/:code, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id, DELETE} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/activate-version, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions/published, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:id/versions, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:moduleId/versions/:versionId/publish, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/modules/:moduleId/versions/:versionId/deprecate, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RoutesResolver","level":"info","message":"ComponentController {/assembox-storage/api/assembox/components}:","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, PUT} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId/category/:category, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/version/:versionId/type/:type, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/find, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/components/:id, DELETE} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RoutesResolver","level":"info","message":"ConfigController {/assembox-storage/api/assembox/configs}:","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/load, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/batch-load, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:componentId/draft, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft/:configId, DELETE} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/publish, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/batch-publish, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/rollback, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/history, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/stats, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/restore, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/compare, GET} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/:configId/draft-history/cleanup, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"RouterExplorer","level":"info","message":"Mapped {/assembox-storage/api/assembox/configs/draft-history/cleanup-before-date, POST} route","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"NestApplication","level":"info","message":"Nest application successfully started","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"","level":"info","message":"\n- 服务 node-lc-assembox-storage-service 已经正常启动! \n- 服务访问地址: http://192.168.5.41:3100/assembox-storage \n- 服务的RESTfulAPI文档地址: http://192.168.5.41:3100/assembox-storage/docs \n- 服务的RPC文档地址: http://192.168.5.41:3100/assembox-storage/rpc/docs","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"NACOS Logger","level":"verbose","message":"[NameProxy][REGISTER-SERVICE] dev registering service: DEFAULT_GROUP@@node-lc-assembox-storage-service with instance:{\"instanceId\":\"e833C063pPr4xoryNch3e\",\"ip\":\"192.168.5.41\",\"port\":3100,\"weight\":1,\"healthy\":true,\"enabled\":true,\"ephemeral\":true,\"clusterName\":\"DEFAULT\",\"serviceName\":\"node-lc-assembox-storage-service\",\"metadata\":{}}","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"NamingRegisting","level":"info","message":"服务 node-lc-assembox-storage-service 在注册中心成功注册!","pid":32760,"timestamp":"2026/01/29 15:27:03"}
+{"context":"NACOS Logger","level":"warn","message":"Error [ConnectionTimeoutError]: Connect timeout for 5000ms, PUT http://dev-nacos.yearrow.com:8848/nacos/v1/ns/instance/beat -2 (connected: false, keepalive socket: false, socketHandledRequests: 1, socketHandledResponses: 0)\nheaders: {}\n    at Timeout._onTimeout (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\urllib@2.44.0\\node_modules\\urllib\\lib\\urllib.js:988:15)\n    at listOnTimeout (node:internal/timers:581:17)\n    at process.processTimers (node:internal/timers:519:7) {\n  requestId: 672,\n  data: undefined,\n  path: '/nacos/v1/ns/instance/beat?beat=%7B%22serviceName%22%3A%22DEFAULT_GROUP%40%40node-lc-assembox-storage-service%22%2C%22ip%22%3A%22192.168.5.41%22%2C%22port%22%3A3100%2C%22cluster%22%3A%22DEFAULT%22%2C%22weight%22%3A1%2C%22metadata%22%3A%7B%7D%2C%22scheduled%22%3Atrue%7D&namespaceId=dev&serviceName=DEFAULT_GROUP%40%40node-lc-assembox-storage-service&username=nacos&password=nacos!%40%23123456',\n  status: -2,\n  headers: {},\n  res: {\n    status: -2,\n    statusCode: -2,\n    statusMessage: null,\n    headers: {},\n    size: 0,\n    aborted: false,\n    rt: 5665,\n    keepAliveSocket: false,\n    data: undefined,\n    requestUrls: [ 'http://dev-nacos.yearrow.com:8848/nacos/v1/ns/instance/beat' ],\n    timing: null,\n    remoteAddress: '',\n    remotePort: '',\n    socketHandledRequests: 1,\n    socketHandledResponses: 0\n  }\n}","pid":32760,"timestamp":"2026/01/29 16:24:18"}
+{"context":"NACOS Logger","level":"error","message":"Error: [CLIENT-BEAT] failed to send beat: {\"serviceName\":\"DEFAULT_GROUP@@node-lc-assembox-storage-service\",\"ip\":\"192.168.5.41\",\"port\":3100,\"cluster\":\"DEFAULT\",\"weight\":1,\"metadata\":{},\"scheduled\":true}, caused by failed to req API: /nacos/v1/ns/instance/beat after all servers(dev-nacos.yearrow.com:8848) tried\n    at NameProxy._reqAPI (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\proxy.js:207:13)\n    at async NameProxy.sendBeat (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\proxy.js:282:23)\n    at async BeatReactor._beat (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\beat_reactor.js:58:32)\n    at async Promise.all (index 0)\n    at async BeatReactor._startBeat (E:\\project\\lowcode\\assembox-service\\node_modules\\.pnpm\\nacos-naming@2.6.0\\node_modules\\nacos-naming\\lib\\naming\\beat_reactor.js:67:7) undefined","pid":32760,"timestamp":"2026/01/29 16:24:18"}
