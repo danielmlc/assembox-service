@@ -52,18 +52,88 @@
 | 概念 | 说明 | 示例 |
 |-----|------|------|
 | 模块版本 (Version) | 大版本，对应代码分支 | V1, V2, V3 |
-| 快照 (Snapshot) | 版本内的发布点，锁定组件状态 | S001, S002, S003 |
-| 清单 (Manifest) | 快照包含的组件版本映射 | `{model:v5, page:v6}` |
-| 激活快照 | 运行时使用的快照 | active_snapshot_id |
+| 构建流水线 (Pipeline) | 版本内的构建通道，按前端/后端分离 | frontend, backend |
+| 快照 (Snapshot) | 流水线内的发布点，锁定该类组件状态 | S001, S002, S003 |
+| 清单 (Manifest) | 快照包含的组件版本映射 | `{page:v6, table:v3}` |
+| 激活快照 | 流水线当前使用的快照 | active_snapshot_id |
 | 热修复 | 脱离快照的单组件发布 | hotfix_components |
+
+**层级结构：**
+
+```
+模块 (ab_module)
+  └── 版本 (ab_module_version)
+        ├── 流水线 frontend (ab_build_pipeline)
+        │     ├── 快照 S001
+        │     ├── 快照 S002
+        │     └── 快照 S003 ← active
+        │
+        └── 流水线 backend (ab_build_pipeline)
+              ├── 快照 S001
+              └── 快照 S002 ← active
+```
+
+> **设计优势**：前端和后端完全解耦，可独立发布、独立构建、独立回滚
 
 ---
 
 ## 2. 表结构设计
 
-### 2.1 快照表 (ab_snapshot)
+### 2.1 构建流水线表 (ab_build_pipeline)
 
-> 核心表，记录每次打包发布生成的快照
+> 解耦版本与快照：每个版本包含多个构建流水线，每个流水线独立管理快照
+
+```sql
+CREATE TABLE ab_build_pipeline (
+    -- 主键
+    id              BIGINT NOT NULL COMMENT '主键',
+
+    -- 关联版本
+    version_id      BIGINT NOT NULL COMMENT '模块版本ID',
+    module_code     VARCHAR(100) NOT NULL COMMENT '模块代码（冗余）',
+    version_code    VARCHAR(20) NOT NULL COMMENT '版本号（冗余）',
+
+    -- 流水线标识
+    pipeline_code   VARCHAR(50) NOT NULL COMMENT '流水线代码: frontend/backend/...',
+    pipeline_name   VARCHAR(100) NOT NULL COMMENT '流水线名称',
+
+    -- 关联的组件分类
+    categories      JSON NOT NULL COMMENT '包含的 category 列表，如 ["frontend"] 或 ["model","service"]',
+
+    -- 快照管理
+    active_snapshot_id   BIGINT COMMENT '当前激活快照ID',
+    active_snapshot_code VARCHAR(20) COMMENT '当前激活快照号（冗余）',
+    latest_snapshot_id   BIGINT COMMENT '最新快照ID（可能未激活）',
+    latest_snapshot_code VARCHAR(20) COMMENT '最新快照号（冗余）',
+
+    -- 审计字段
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    creator_id      BIGINT,
+    creator_name    VARCHAR(50),
+    modifier_at     DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    modifier_id     BIGINT,
+    modifier_name   VARCHAR(50),
+    is_removed      TINYINT(1) DEFAULT 0,
+    version         BIGINT DEFAULT 0,
+
+    sort_code       INT,
+    is_enable       TINYINT(1) DEFAULT 1,
+
+    PRIMARY KEY (id, version_id),
+    UNIQUE KEY uk_version_pipeline (version_id, pipeline_code)
+) COMMENT '构建流水线表';
+```
+
+**预设流水线配置：**
+
+| pipeline_code | pipeline_name | categories | 说明 |
+|---------------|---------------|------------|------|
+| `frontend` | 前端构建 | `["frontend"]` | 包含 page、table、form 等 |
+| `backend` | 后端构建 | `["model", "service"]` | 包含 model、logic、api 等 |
+
+### 2.2 快照表 (ab_snapshot)
+
+> 核心表，记录每次打包发布生成的快照（按流水线分组）
 
 ```sql
 CREATE TABLE ab_snapshot (
@@ -125,9 +195,9 @@ CREATE TABLE ab_snapshot (
 ) COMMENT '配置快照表';
 ```
 
-### 2.2 租户快照配置表 (ab_tenant_snapshot)
+### 2.3 租户快照配置表 (ab_tenant_snapshot)
 
-> 支持灰度发布，不同租户使用不同快照
+> 支持灰度发布，不同租户对不同流水线使用不同快照
 
 ```sql
 CREATE TABLE ab_tenant_snapshot (
@@ -137,10 +207,12 @@ CREATE TABLE ab_tenant_snapshot (
     -- 租户信息
     tenant          VARCHAR(64) NOT NULL COMMENT '租户代码',
 
-    -- 关联版本
-    version_id      BIGINT NOT NULL COMMENT '模块版本ID',
+    -- 关联流水线
+    pipeline_id     BIGINT NOT NULL COMMENT '流水线ID',
+    version_id      BIGINT NOT NULL COMMENT '模块版本ID（冗余）',
     module_code     VARCHAR(100) NOT NULL COMMENT '模块代码（冗余）',
     version_code    VARCHAR(20) NOT NULL COMMENT '版本号（冗余）',
+    pipeline_code   VARCHAR(50) NOT NULL COMMENT '流水线代码（冗余）',
 
     -- 快照配置
     snapshot_id     BIGINT NOT NULL COMMENT '该租户使用的快照ID',
@@ -163,16 +235,18 @@ CREATE TABLE ab_tenant_snapshot (
     is_removed      TINYINT(1) DEFAULT 0,
     version         BIGINT DEFAULT 0,
 
-    PRIMARY KEY (id, version_id, tenant)
+    PRIMARY KEY (id, pipeline_id, tenant),
+    UNIQUE KEY uk_tenant_pipeline (tenant, pipeline_id)
 ) COMMENT '租户快照配置表（灰度发布用）';
 ```
 
-### 2.3 Manifest 结构定义
+### 2.4 Manifest 结构定义
 
 ```typescript
 interface SnapshotManifest {
     // 快照元信息
     snapshotCode: string;           // S003
+    pipelineCode: string;           // frontend 或 backend
     createdAt: string;              // ISO 时间
     baseSnapshotCode?: string;      // 基于哪个快照（用于计算变更）
 
@@ -269,6 +343,7 @@ interface ComponentVersion {
 ```typescript
 interface PackagePublishRequest {
     versionId: number;              // 模块版本 ID
+    pipelineCode: string;           // 流水线代码: frontend/backend
     componentIds: number[];         // 待发布的配置 ID 列表
     snapshotName?: string;          // 快照名称（可选）
     description?: string;           // 发布说明（可选）
@@ -276,6 +351,7 @@ interface PackagePublishRequest {
 }
 
 interface PackagePublishResponse {
+    pipelineId: number;
     snapshotId: number;
     snapshotCode: string;
     publishedCount: number;
@@ -308,40 +384,52 @@ class SnapshotPublishService {
         // 3. 开启事务
         return await this.db.transaction(async (tx) => {
 
-            // 4. 生成快照号
-            const snapshotCode = await this.generateSnapshotCode(req.versionId, tx);
+            // 4. 获取或创建流水线
+            let pipeline = await this.pipelineRepo.findByCode(
+                req.versionId,
+                req.pipelineCode,
+                tx
+            );
+            if (!pipeline) {
+                pipeline = await this.createPipeline(version, req.pipelineCode, tx);
+            }
 
-            // 5. 构建初始 manifest（发布前）
+            // 5. 生成快照号（同一流水线下递增）
+            const snapshotCode = await this.generateSnapshotCode(pipeline.id, tx);
+
+            // 6. 构建初始 manifest（只含该流水线 category 的组件）
             const manifest = await this.buildManifest(
                 req.versionId,
                 req.componentIds,
-                version.active_snapshot_id,
+                pipeline,
                 tx
             );
 
-            // 6. 创建快照记录
+            // 7. 创建快照记录
             const snapshot = await this.snapshotRepo.create({
+                pipeline_id: pipeline.id,
                 version_id: req.versionId,
                 module_code: version.module_code,
                 version_code: version.version_code,
+                pipeline_code: req.pipelineCode,
                 snapshot_code: snapshotCode,
                 snapshot_name: req.snapshotName,
                 description: req.description,
                 manifest: manifest,
                 status: 'active',
-                base_snapshot_id: version.active_snapshot_id,
+                base_snapshot_id: pipeline.active_snapshot_id,
                 published_at: new Date(),
                 publisher_id: publisherId,
                 component_count: Object.keys(manifest.components).length,
                 changed_count: req.componentIds.length,
             }, tx);
 
-            // 7. 批量发布组件
+            // 8. 批量发布组件
             for (const configId of req.componentIds) {
                 await this.publishSingleConfig(configId, snapshot.id, tx);
             }
 
-            // 8. 更新 manifest 中的 OSS key（发布后才有）
+            // 9. 更新 manifest 中的 OSS key（发布后才有）
             const updatedManifest = await this.updateManifestOssKeys(
                 manifest,
                 req.componentIds,
@@ -349,8 +437,8 @@ class SnapshotPublishService {
             );
             await this.snapshotRepo.updateManifest(snapshot.id, updatedManifest, tx);
 
-            // 9. 激活快照
-            await this.versionRepo.update(req.versionId, {
+            // 10. 激活快照（更新流水线表）
+            await this.pipelineRepo.update(pipeline.id, {
                 active_snapshot_id: snapshot.id,
                 active_snapshot_code: snapshotCode,
                 latest_snapshot_id: snapshot.id,
@@ -358,6 +446,7 @@ class SnapshotPublishService {
             }, tx);
 
             return {
+                pipelineId: pipeline.id,
                 snapshotId: snapshot.id,
                 snapshotCode: snapshotCode,
                 publishedCount: req.componentIds.length,
@@ -367,13 +456,13 @@ class SnapshotPublishService {
     }
 
     /**
-     * 生成快照号：S001, S002, S003...
+     * 生成快照号：S001, S002, S003...（同一流水线下递增）
      */
     private async generateSnapshotCode(
-        versionId: number,
+        pipelineId: number,
         tx?: Transaction
     ): Promise<string> {
-        const lastSnapshot = await this.snapshotRepo.findLatest(versionId, tx);
+        const lastSnapshot = await this.snapshotRepo.findLatestByPipeline(pipelineId, tx);
 
         if (!lastSnapshot) {
             return 'S001';
@@ -389,27 +478,30 @@ class SnapshotPublishService {
     /**
      * 构建 Manifest
      * 
-     * 注意：只收录构建时配置(is_runtime=0)，运行时配置不关联快照
+     * 注意：只收录该流水线 categories 对应的组件
      */
     private async buildManifest(
         versionId: number,
         publishingConfigIds: number[],
-        baseSnapshotId: number | null,
+        pipeline: BuildPipeline,
         tx?: Transaction
     ): Promise<SnapshotManifest> {
         // 获取该版本所有组件的当前状态
         const configs = await this.configRepo.findByVersion(versionId, tx);
         
-        // 获取组件元信息（用于判断 is_runtime）
+        // 获取组件元信息（用于判断 category）
         const components$ = await this.componentRepo.findByVersion(versionId, tx);
         const componentMap = new Map(
             components$.map(c => [`${c.component_type}/${c.component_code}`, c])
         );
 
+        // 流水线包含的 categories
+        const pipelineCategories = new Set(pipeline.categories);
+
         // 获取基准快照的 manifest
         let baseManifest: SnapshotManifest | null = null;
-        if (baseSnapshotId) {
-            const baseSnapshot = await this.snapshotRepo.findById(baseSnapshotId, tx);
+        if (pipeline.active_snapshot_id) {
+            const baseSnapshot = await this.snapshotRepo.findById(pipeline.active_snapshot_id, tx);
             baseManifest = baseSnapshot?.manifest;
         }
 
@@ -420,8 +512,8 @@ class SnapshotPublishService {
             const key = `${config.component_type}/${config.component_code}`;
             const componentMeta = componentMap.get(key);
 
-            // 忽略运行时配置，不关联到快照
-            if (componentMeta?.is_runtime === 1) {
+            // 只收录该流水线 categories 对应的组件
+            if (!componentMeta || !pipelineCategories.has(componentMeta.category)) {
                 continue;
             }
 
@@ -455,6 +547,7 @@ class SnapshotPublishService {
 
         return {
             snapshotCode: '',  // 后续填充
+            pipelineCode: pipeline.pipeline_code,
             createdAt: new Date().toISOString(),
             baseSnapshotCode: baseManifest?.snapshotCode,
             components,
@@ -562,7 +655,8 @@ class SnapshotPostProcessor {
         snapshot: Snapshot,
         version: ModuleVersion
     ): Promise<void> {
-        const tag = `${version.module_code}/${version.version_code}/${snapshot.snapshot_code}`;
+        // git tag 格式包含流水线代码
+        const tag = `${version.module_code}/${version.version_code}/${snapshot.pipeline_code}/${snapshot.snapshot_code}`;
 
         await this.gitea.createCommit({
             branch: version.git_branch,
@@ -597,24 +691,34 @@ class SnapshotPostProcessor {
 class SnapshotLoader {
 
     /**
-     * 获取租户的激活快照
+     * 获取租户的激活快照（按流水线）
      */
     async getActiveSnapshot(
         moduleCode: string,
         versionCode: string,
+        pipelineCode: string,
         tenant: string
     ): Promise<Snapshot> {
         // 1. 尝试从缓存获取
-        const cacheKey = `assembox:snapshot:${moduleCode}:${versionCode}:${tenant}`;
+        const cacheKey = `assembox:snapshot:${moduleCode}:${versionCode}:${pipelineCode}:${tenant}`;
         const cached = await this.redis.get(cacheKey);
         if (cached) {
             return JSON.parse(cached);
         }
 
-        // 2. 查询租户级快照配置
-        const tenantSnapshot = await this.tenantSnapshotRepo.findByTenant(
+        // 2. 获取流水线
+        const pipeline = await this.pipelineRepo.findByCode(
             moduleCode,
             versionCode,
+            pipelineCode
+        );
+        if (!pipeline) {
+            throw new PipelineNotFoundError(pipelineCode);
+        }
+
+        // 3. 查询租户级快照配置
+        const tenantSnapshot = await this.tenantSnapshotRepo.findByTenant(
+            pipeline.id,
             tenant
         );
 
@@ -624,12 +728,11 @@ class SnapshotLoader {
             // 使用租户级配置的快照
             snapshot = await this.snapshotRepo.findById(tenantSnapshot.snapshot_id);
         } else {
-            // 使用版本级默认快照
-            const version = await this.versionRepo.findByCode(moduleCode, versionCode);
-            snapshot = await this.snapshotRepo.findById(version.active_snapshot_id);
+            // 使用流水线默认快照
+            snapshot = await this.snapshotRepo.findById(pipeline.active_snapshot_id);
         }
 
-        // 3. 写入缓存
+        // 4. 写入缓存
         await this.redis.setex(cacheKey, 600, JSON.stringify(snapshot));
 
         return snapshot;
