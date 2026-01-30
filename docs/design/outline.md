@@ -48,11 +48,17 @@ docs/design/
 │   ├── property-panel.md         # 属性面板设计
 │   └── preview.md                # 预览系统设计
 │
-└── 05-publish/                   # 五、发布流程设计
-    ├── overview.md               # 发布流程总览
-    ├── build-process.md          # 构建流程设计
-    ├── code-generation.md        # 代码生成设计
-    └── deployment.md             # 部署方案设计
+├── 05-publish/                   # 五、发布流程设计（旧版，参考用）
+│   ├── overview.md               # 发布流程总览
+│   ├── build-process.md          # 构建流程设计
+│   ├── code-generation.md        # 代码生成设计
+│   └── deployment.md             # 部署方案设计
+│
+├── 06-service-gen/               # 六、服务层代码生成设计（NEW）
+│   └── overview.md               # 代码生成总览：配置体系、生成引擎
+│
+└── 07-build-deploy/              # 七、构建发布部署设计（NEW）
+    └── overview.md               # 构建部署总览：流水线、K8s、健康检查
 ```
 
 **设计阶段：**
@@ -71,7 +77,9 @@ docs/design/
 | 二、服务层设计 | 🟢 | 配置服务、元数据服务、预览引擎、发布模块 |
 | 三、前端层设计 | 🟢 | 运行时、渲染器、组件库 |
 | 四、设计器工具设计 | 🔴 | 拖拽、画布、属性面板、预览 |
-| 五、发布流程设计 | 🟢 | **代码生成**、构建流程、部署方案 |
+| 五、发布流程设计 | 🟢 | 旧版设计，参考用 |
+| 六、服务层代码生成 (NEW) | 🟡 | 配置体系、代码生成引擎、生成器实现 |
+| 七、构建发布部署 (NEW) | 🟡 | 构建流水线、K8s部署、健康检查 |
 
 ---
 
@@ -634,6 +642,74 @@ interface PageMetadata {
 | [code-generation.md](./05-publish/code-generation.md) | **代码生成设计（核心）**：生成器架构、后端代码生成 |
 | [build-process.md](./05-publish/build-process.md) | 构建流程设计：CI/CD 流水线、质量门禁、镜像构建 |
 | [deployment.md](./05-publish/deployment.md) | 部署方案设计：K8s 资源、发布策略、监控告警 |
+
+---
+
+## 六、服务层代码生成设计 (NEW)
+
+**状态**: 🟡 设计中
+
+**目录**: [06-service-gen/](./06-service-gen/)
+
+**设计说明**：
+> 基于"代码模板 + 配置数据"的方式生成标准 NestJS 服务代码。
+> 复用存储层的组件类型体系，扩展 service 分类下的组件类型。
+> 采用 ts-morph 进行 TypeScript AST 操作，保证类型安全。
+
+**核心内容**：
+- 服务配置体系设计（扩展 component-types）
+- 代码生成引擎架构
+- Entity / DTO / Controller / Service / Module 生成器
+- 生成目录结构规范
+
+**组件类型扩展**：
+| 组件类型 | 说明 | 生成产物 |
+|---------|------|---------|
+| module | 模块配置 | {module}.module.ts |
+| dto | DTO 配置 | {entity}.dto.ts |
+| repository | 仓储配置 | {entity}.repository.ts |
+| model | 数据模型 | {entity}.entity.ts |
+| api | API 接口配置 | {entity}.controller.ts |
+| logic | 逻辑编排配置 | {entity}.service.ts |
+
+**文档索引**：
+| 文档 | 说明 |
+|-----|------|
+| [overview.md](./06-service-gen/overview.md) | 服务层代码生成总览 |
+
+---
+
+## 七、构建发布部署设计 (NEW)
+
+**状态**: 🟡 设计中
+
+**目录**: [07-build-deploy/](./07-build-deploy/)
+
+**设计说明**：
+> 实现从配置到可运行服务的完整构建发布流程。
+> 包含配置获取、代码生成、编译校验、打包镜像、部署上线的完整链路。
+> 支持健康检查和自动回滚机制。
+
+**核心流程**：
+```
+配置获取 → 代码生成 → 编译校验 → 打包镜像 → 部署上线
+    │          │          │          │          │
+    ▼          ▼          ▼          ▼          ▼
+ 快照API    ts-morph    tsc/ESLint  Docker    K8s/容器
+```
+
+**核心内容**：
+- 发布任务状态机
+- 构建流水线设计
+- Kubernetes 部署清单
+- 健康检查机制
+- 版本管理和回滚策略
+- 通知告警
+
+**文档索引**：
+| 文档 | 说明 |
+|-----|------|
+| [overview.md](./07-build-deploy/overview.md) | 构建发布部署总览 |
 
 ---
 
