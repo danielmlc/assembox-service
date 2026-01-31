@@ -676,6 +676,7 @@ interface PageMetadata {
 | 文档 | 说明 |
 |-----|------|
 | [overview.md](./06-service-gen/overview.md) | 服务层代码生成总览 |
+| [logic-design.md](./06-service-gen/logic-design.md) | **服务逻辑编排详细设计（核心）** |
 
 ---
 

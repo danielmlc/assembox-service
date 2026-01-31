@@ -1061,6 +1061,7 @@ export class CodeGenerationService {
 
 | 文档 | 说明 |
 |-----|------|
+| [服务逻辑编排详细设计](./logic-design.md) | **Logic 配置详细设计（核心）** |
 | [组件类型扩展规范](../01-storage/component-types.md) | 组件类型定义 |
 | [配置详细设计](../01-storage/config-detail.md) | 配置存储结构 |
 | [构建部署流程](../07-build-deploy/overview.md) | 构建和部署设计 |
